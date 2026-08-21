@@ -1,0 +1,34 @@
+services:
+  todotodolist:
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      NODE_ENV: production
+      GITHUB_TOKEN: ${GITHUB_TOKEN}
+      GITHUB_OWNER: ${GITHUB_OWNER}
+      GITHUB_REPO: ${GITHUB_REPO}
+      GITHUB_BRANCH: ${GITHUB_BRANCH:-main}
+      GITHUB_SNAPSHOT_PATH: ${GITHUB_SNAPSHOT_PATH:-todotodolist/snapshot.json}
+      HUMAN_SOURCE_ID: ${HUMAN_SOURCE_ID:-findwork}
+      HUMAN_SOURCE_PATH: ${HUMAN_SOURCE_PATH:-findwork/**/*.md}
+      HUMAN_SOURCE_SECTION: ${HUMAN_SOURCE_SECTION:-work}
+      TODOTODOLIST_PASSWORD: ${TODOTODOLIST_PASSWORD}
+      TODOTODOLIST_AUTH_SECRET: ${TODOTODOLIST_AUTH_SECRET}
+      TODOTODOLIST_API_TOKEN: ${TODOTODOLIST_API_TOKEN}
+      TODOTODOLIST_API_ALLOWED_ORIGINS: ${TODOTODOLIST_API_ALLOWED_ORIGINS}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET}
+      GOOGLE_REDIRECT_URI: ${GOOGLE_REDIRECT_URI}
+      GOOGLE_REFRESH_TOKEN: ${GOOGLE_REFRESH_TOKEN}
+      GOOGLE_REFRESH_TOKEN_PATH: ${GOOGLE_REFRESH_TOKEN_PATH:-/data/google-calendar-token.json}
+      GOOGLE_CALENDAR_ID: ${GOOGLE_CALENDAR_ID:-primary}
+      GOOGLE_CALENDAR_SECTION: ${GOOGLE_CALENDAR_SECTION:-work}
+    volumes:
+      - ./data:/data
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
