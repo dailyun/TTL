@@ -5,8 +5,7 @@ ENV NEXT_TELEMETRY_DISABLED=1
 
 COPY package.json package-lock.json ./
 RUN npm config set registry https://registry.npmjs.org/ \
-  && rm -f package-lock.json \
-  && npm install
+  && npm ci
 
 COPY . .
 RUN npm run build

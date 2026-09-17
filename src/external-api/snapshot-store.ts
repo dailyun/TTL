@@ -1,3 +1,7 @@
+import { withCheckInState } from "../check-ins/store.js";
+import { execution, changed, reconcileItems, reconcileOwnerEdits } from "../execution/core.js";
+import { createEmptySnapshot } from "../execution/empty-snapshot.js";
+export { createEmptySnapshot } from "../execution/empty-snapshot.js";
 import type { GitHubContentsClient } from "../github-human-files/github-client.js";
 import { GitHubApiError } from "../github-human-files/github-client.js";
 import { validateSnapshot, type AppSnapshot } from "../local-db/db.js";
@@ -19,9 +23,11 @@ export interface SnapshotMutationResult<T> {
 }
 
 export async function readExternalApiSnapshot(
-  client: GitHubContentsClient,
+  client: GitHubContentsClient | undefined,
   sourcePath = externalApiSnapshotPath()
 ): Promise<SnapshotReadResult | null> {
+  if (process.env.TODOTODOLIST_STATE_PATH) return withCheckInState(state => ({ sha: String(execution(state).revision), snapshot: execution(state).snapshot }), false);
+  if (!client) throw new Error("GitHub snapshot client missing");
   try {
     const file = await client.readFile(sourcePath);
     return {
@@ -35,11 +41,20 @@ export async function readExternalApiSnapshot(
 }
 
 export async function mutateExternalApiSnapshot<T>(params: {
-  client: GitHubContentsClient;
+  client: GitHubContentsClient | undefined;
   mutate: (snapshot: AppSnapshot) => { result: T; snapshot: AppSnapshot };
   message: string;
   sourcePath?: string;
 }): Promise<SnapshotMutationResult<T>> {
+  if (process.env.TODOTODOLIST_STATE_PATH) return withCheckInState(state => {
+    const w = execution(state);
+    const beforeItems = structuredClone(w.snapshot.items);
+    const mutation = params.mutate(structuredClone(w.snapshot));
+    w.snapshot = validateSnapshot(mutation.snapshot);
+    reconcileOwnerEdits(state, beforeItems); reconcileItems(state); changed(state, "external_api");
+    return { result: mutation.result, sha: String(w.revision), snapshot: w.snapshot, writeAttempts: 1 };
+  });
+  if (!params.client) throw new Error("GitHub snapshot client missing");
   const sourcePath = params.sourcePath ?? externalApiSnapshotPath();
 
   for (let attempt = 1; attempt <= MAX_WRITE_ATTEMPTS; attempt += 1) {
@@ -74,33 +89,6 @@ export async function mutateExternalApiSnapshot<T>(params: {
   throw new ExternalApiError(409, "write_conflict", "Snapshot write conflict. Retry the request.");
 }
 
-export function createEmptySnapshot(now = new Date().toISOString()): AppSnapshot {
-  return {
-    app: "todotodolist",
-    version: 1,
-    exportedAt: now,
-    items: [],
-    sections: [
-      section("inbox", "收集箱", "#6b7280", 0, now, true),
-      section("work", "工作", "#276c63", 1, now),
-      section("life", "生活", "#b7532f", 2, now)
-    ],
-    settings: [
-      {
-        id: "default",
-        defaultSectionId: "inbox",
-        showDoneInCalendar: false,
-        showAbandonedInBoard: false,
-        autoPullGitHubSnapshotOnStart: false,
-        autoPushGitHubSnapshotOnChange: false,
-        createdAt: now,
-        updatedAt: now
-      }
-    ],
-    syncMetadata: []
-  };
-}
-
 export function externalApiSnapshotPath(): string {
   return process.env.GITHUB_SNAPSHOT_PATH || DEFAULT_SNAPSHOT_PATH;
 }
@@ -109,23 +97,4 @@ export function nextTimestamp(previous?: string, now = new Date()): string {
   const nowMs = now.getTime();
   const previousMs = previous ? new Date(previous).getTime() : Number.NaN;
   return new Date(Number.isNaN(previousMs) ? nowMs : Math.max(nowMs, previousMs + 1)).toISOString();
-}
-
-function section(
-  id: string,
-  name: string,
-  color: string,
-  sortOrder: number,
-  now: string,
-  isInbox = false
-) {
-  return {
-    id,
-    name,
-    color,
-    sortOrder,
-    isInbox: isInbox || undefined,
-    createdAt: now,
-    updatedAt: now
-  };
 }

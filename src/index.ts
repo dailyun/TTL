@@ -63,13 +63,18 @@ export {
   googleCalendarConfigFromEnv,
   googleCalendarEventToItem,
   googleCalendarPatchFromItem,
+  listGoogleCalendarEventChanges,
   listGoogleCalendarEvents,
   patchGoogleCalendarEvent,
-  refreshGoogleCalendarAccessToken
+  refreshGoogleCalendarAccessToken,
+  stopGoogleCalendarWatchChannel,
+  watchGoogleCalendarEvents
 } from "./google-calendar/client.js";
 export type {
   GoogleCalendarConfig,
   GoogleCalendarEvent,
+  GoogleCalendarEventChanges,
   GoogleCalendarEventPatch,
-  GoogleCalendarTokenResponse
+  GoogleCalendarTokenResponse,
+  GoogleCalendarWatchChannel
 } from "./google-calendar/client.js";

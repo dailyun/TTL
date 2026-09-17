@@ -13,7 +13,13 @@
     "demo:human-writeback": "tsx scripts/demo-human-writeback.ts",
     "local-git:seed": "tsx scripts/seed-local-git-repo.ts",
     "github:import-human-files": "tsx scripts/import-github-human-files.ts",
-    "github:writeback-human-file": "tsx scripts/writeback-github-human-file.ts"
+    "github:writeback-human-file": "tsx scripts/writeback-github-human-file.ts",
+    "push:keys": "node scripts/configure-web-push.mjs",
+    "reminders:worker": "node --env-file-if-exists=.env --env-file-if-exists=.env.local scripts/reminder-worker.mjs",
+    "reminders:once": "node --env-file-if-exists=.env --env-file-if-exists=.env.local scripts/reminder-worker.mjs --once",
+    "execution:worker": "node --env-file-if-exists=.env --env-file-if-exists=.env.local --import tsx scripts/execution-worker.ts",
+    "execution:migrate": "node --env-file-if-exists=.env --env-file-if-exists=.env.local --import tsx scripts/migrate-execution.ts",
+    "execution:backup": "node --env-file-if-exists=.env --env-file-if-exists=.env.local --import tsx scripts/backup-execution.ts"
   },
   "dependencies": {
     "@types/micromatch": "^4.0.10",
@@ -23,14 +29,18 @@
     "lucide-react": "^1.23.0",
     "micromatch": "^4.0.8",
     "next": "^16.2.10",
+    "proper-lockfile": "^4.1.2",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
+    "web-push": "^3.6.7",
     "zod": "^3.25.76"
   },
   "devDependencies": {
     "@types/node": "^22.13.14",
+    "@types/proper-lockfile": "^4.1.4",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
+    "@types/web-push": "^3.6.4",
     "tsx": "^4.20.5",
     "typescript": "^5.8.3"
   },

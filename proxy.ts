@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { canonicalGoogleOAuthRedirect } from "./src/google-calendar/oauth-browser.js";
 import {
   isSimpleAuthEnabled,
   SIMPLE_AUTH_COOKIE,
@@ -12,8 +13,13 @@ const PUBLIC_PATH_PREFIXES = [
   "/api/v1",
   "/favicon.ico"
 ];
+const PUBLIC_EXACT_PATHS = new Set(["/api/google-calendar/webhook"]);
 
 export async function proxy(request: NextRequest) {
+  // The legacy callback must reach the current site before checking cookies:
+  // cookies from .win cannot be read at .club. Authentication still runs there.
+  const oauthRedirect = canonicalGoogleOAuthRedirect(request);
+  if (oauthRedirect) return oauthRedirect;
   if (!isSimpleAuthEnabled() || isPublicPath(request.nextUrl.pathname)) {
     return NextResponse.next();
   }
@@ -28,6 +34,14 @@ export async function proxy(request: NextRequest) {
   }
 
   if (request.nextUrl.pathname.startsWith("/api/")) {
+    if (request.nextUrl.pathname === "/api/google-calendar/oauth/start" || request.nextUrl.pathname === "/api/google-calendar/oauth/callback") {
+      const loginUrl = new URL("/login", process.env.TODOTODOLIST_PUBLIC_URL || request.url);
+      loginUrl.searchParams.set("next", "/api/google-calendar/oauth/start");
+      const response = NextResponse.redirect(loginUrl);
+      response.headers.set("cache-control", "no-store");
+      response.headers.set("referrer-policy", "no-referrer");
+      return response;
+    }
     return NextResponse.json(
       { error: "unauthorized" },
       {
@@ -49,5 +63,6 @@ export const config = {
 };
 
 function isPublicPath(pathname: string): boolean {
-  return PUBLIC_PATH_PREFIXES.some((prefix) => pathname.startsWith(prefix));
+  return PUBLIC_EXACT_PATHS.has(pathname)
+    || PUBLIC_PATH_PREFIXES.some((prefix) => pathname.startsWith(prefix));
 }

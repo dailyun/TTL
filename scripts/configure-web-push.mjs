@@ -1,0 +1,10 @@
+import { writeFileSync } from "node:fs";
+import webpush from "web-push";
+const args = process.argv.slice(2);
+const value = (key) => args[args.indexOf(key) + 1];
+if (!args.includes("--subject") || !args.includes("--output")) throw new Error("Usage: npm run push:keys -- --subject https://your-domain --output /secure/path/web-push.env");
+const subject = value("--subject");
+if (!/^(https:\/\/|mailto:)[^\s'\"\\]+$/.test(subject)) throw new Error("subject must be an HTTPS URL or mailto address");
+const keys = webpush.generateVAPIDKeys();
+writeFileSync(value("--output"), `WEB_PUSH_SUBJECT=${subject}\nWEB_PUSH_PUBLIC_KEY=${keys.publicKey}\nWEB_PUSH_PRIVATE_KEY=${keys.privateKey}\n`, { flag: "wx", mode: 0o600 });
+console.log("Web Push keys saved to the requested private file. Existing files are never overwritten.");

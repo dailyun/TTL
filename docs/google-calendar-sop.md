@@ -15,14 +15,18 @@
 - 在日历中拖动或拉伸 Google 来源事项后写回远端。
 - 删除 Google 来源事项时，先删除远端事件，再对本地事项执行软删除。
 - 使用 Google event `etag` 检测并阻止覆盖远端新版本。
+- 使用 Google Events watch Webhook 接收变化通知，并通过 `nextSyncToken` 增量拉取。
+- 服务端保留尚未被浏览器确认的变更，页面恢复后会继续投递。
+- 推送通道临近过期时自动续订，并用低频增量轮询弥补漏推。
 
 当前限制：
 
 - 只配置一个日历，不提供应用内日历选择器。
-- 默认导入过去 14 天到未来 90 天的事件。
-- 导入为手动操作，尚未使用 `nextSyncToken` 或后台定时同步。
+- 手动导入默认覆盖过去 14 天到未来 90 天；实时同步首次覆盖范围默认是过去 30 天到未来 365 天。
+- 实时结果写入浏览器 IndexedDB，因此页面关闭时服务端会积累待投递变更，重新打开页面后再应用到本地。
+- 默认同步状态文件适合单实例部署；多实例需要把同步状态迁移到共享、具备并发控制的存储。
 - 复杂重复规则不在当前编辑范围内。
-- OAuth refresh token 由部署者手动写入服务端环境变量。
+- OAuth 回调会把 refresh token 写入 `GOOGLE_REFRESH_TOKEN_PATH`；部署者需要为该路径提供持久化存储。
 
 应用申请的 Google scope 为：
 
@@ -164,6 +168,12 @@ GOOGLE_REDIRECT_URI=https://todo.example.com/api/google-calendar/oauth/callback
 GOOGLE_REFRESH_TOKEN=
 GOOGLE_CALENDAR_ID=primary
 GOOGLE_CALENDAR_SECTION=work
+GOOGLE_CALENDAR_WEBHOOK_URL=https://todo.example.com/api/google-calendar/webhook
+GOOGLE_CALENDAR_SYNC_STATE_PATH=/data/google-calendar-sync-state.json
+GOOGLE_CALENDAR_FALLBACK_POLL_SECONDS=300
+GOOGLE_CALENDAR_INITIAL_DAYS_BACK=30
+GOOGLE_CALENDAR_INITIAL_DAYS_FORWARD=365
+GOOGLE_CALENDAR_WATCH_TTL_SECONDS=518400
 ```
 
 变量说明：
@@ -173,9 +183,15 @@ GOOGLE_CALENDAR_SECTION=work
 | `GOOGLE_CLIENT_ID` | 是 | Web application OAuth Client ID |
 | `GOOGLE_CLIENT_SECRET` | 是 | OAuth Client secret，只保存在服务端 |
 | `GOOGLE_REDIRECT_URI` | 是 | 必须与 Google Cloud 中配置的 URI 完全一致 |
-| `GOOGLE_REFRESH_TOKEN` | 授权后 | 用于服务端持续换取 access token |
+| `GOOGLE_REFRESH_TOKEN` | 否 | 手动部署的后备值；正常授权会写入 `GOOGLE_REFRESH_TOKEN_PATH` |
 | `GOOGLE_CALENDAR_ID` | 是 | 默认使用 `primary`；也可填写目标次级日历 ID |
 | `GOOGLE_CALENDAR_SECTION` | 是 | Google 事件导入后的本地版块 ID，如 `work` |
+| `GOOGLE_CALENDAR_WEBHOOK_URL` | 实时同步必填 | 公网可访问、证书有效的 HTTPS Webhook 完整地址 |
+| `GOOGLE_CALENDAR_SYNC_STATE_PATH` | 实时同步必填 | 持久化 sync token、通道信息和待投递变更的文件路径 |
+| `GOOGLE_CALENDAR_FALLBACK_POLL_SECONDS` | 否 | 漏推兜底轮询周期，默认 300 秒，最小 15 秒 |
+| `GOOGLE_CALENDAR_INITIAL_DAYS_BACK` | 否 | 首次增量同步向过去覆盖的天数，默认 30 |
+| `GOOGLE_CALENDAR_INITIAL_DAYS_FORWARD` | 否 | 首次增量同步向未来覆盖的天数，默认 365 |
+| `GOOGLE_CALENDAR_WATCH_TTL_SECONDS` | 否 | 推送通道申请寿命，默认 6 天、最大 7 天 |
 
 如果使用 Docker Compose，确认上述变量已经传入容器。仓库中的 `docker-compose.example.yml` 已包含这些变量。
 
@@ -232,25 +248,15 @@ GOOGLE_CALENDAR_SECTION=work
 
 ### 6.4 保存 refresh token
 
-授权成功后，回调页会显示 refresh token。
+授权成功后，回调会把 refresh token 自动写入 `GOOGLE_REFRESH_TOKEN_PATH`。确认回调页提示保存成功，然后关闭页面；不需要复制 token 或重启应用。
 
-立即执行：
-
-1. 复制完整 token，不要添加引号或换行。
-2. 写入部署环境变量：
-
-```env
-GOOGLE_REFRESH_TOKEN=<callback 页面显示的 token>
-```
-
-3. 重启 TodoTodoList。
-4. 关闭包含 token 的回调页面。
+如果自动保存失败，先检查目标目录是否存在且应用进程有写权限，再重新授权。`GOOGLE_REFRESH_TOKEN` 只作为无法提供持久化文件时的手动后备方案。
 
 安全要求：
 
 - 不要把回调页面截图发送到聊天工具。
 - 不要把 token 写入 README、日志或 Git。
-- 回调响应已设置 `Cache-Control: no-store`，但 token 在页面打开期间仍是明文可见的。
+- 回调响应已设置 `Cache-Control: no-store`，成功页面不会回显 token。
 
 ### 6.5 确认授权完成
 
@@ -322,6 +328,16 @@ GOOGLE_CALENDAR_ID=<calendar id>
 3. 点击“从 Google Calendar 拉取近期日程”。
 4. 确认事件出现在日历和配置的本地版块中。
 5. 分别验证普通定时事件和全天事件，日期不得提前或延后一天。
+
+### 8.2.1 实时增量同步
+
+1. 确认 `GOOGLE_CALENDAR_WEBHOOK_URL` 可从公网通过 HTTPS 访问，且该地址直接指向 `/api/google-calendar/webhook`。
+2. 在侧栏启用“Google 日历实时同步”。
+3. 刷新同步页状态，确认“实时同步”显示“推送通道运行中”。
+4. 在 Google Calendar 新建或修改一个未来事件，不点击手动导入。
+5. 保持 TodoTodoList 页面打开，确认通常在数秒内出现变更。
+6. 关闭页面，再修改另一个事件；重新打开页面后确认积累的变更被投递。
+7. 删除 Google 端测试事件，确认本地收到软删除。
 
 ### 8.3 本地到 Google
 
@@ -492,3 +508,8 @@ GOOGLE_REFRESH_TOKEN=
 - [Google OAuth 2.0 Web Server 应用流程](https://developers.google.com/identity/protocols/oauth2/web-server)
 - [Google Calendar API Events](https://developers.google.com/workspace/calendar/api/v3/reference/events)
 - [Google Calendar 增量同步](https://developers.google.com/workspace/calendar/api/guides/sync)
+
+
+## 实际完成状态（2026-09-17 校准）
+
+日历事件结束只表示计划时间已过。首次导入非取消事件保持 `active`；后续改期/增量导入保留原事项状态（包括本人设置的完成、搁置或放弃），更新日程字段。以前由结束时间自动产生的 `done` 不批量重置，避免覆盖本人结果。新的回顾页单独记录一次执行的反馈，暂不自动修改 Item/Google/长期目标状态。

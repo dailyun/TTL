@@ -1,6 +1,15 @@
 # TodoTodoList
 
-TodoTodoList is a personal idea, todo, and event workspace built around a human-readable GitHub private repo.
+TodoTodoList is a personal execution workspace. The persistent server stores items, calendar links and feedback; the local Goal Tree and Codex handle planning and analysis. GitHub remains an optional file source and snapshot archive.
+
+## Repository and local workspace
+
+- Source repository: [dailyun/TTL](https://github.com/dailyun/TTL), SSH `git@github.com:dailyun/TTL.git`.
+- Local checkout: `/Users/dali/Documents/project/todotodolist`, with its own `.git` directory.
+- The former `findjob/projects/todotodolist` path is a compatibility symlink to this checkout. Use the new directory for development and Git operations.
+- Project-only history was extracted from the former parent repository. Existing working files and local runtime data were retained during the move.
+- `.env*` (except `.env.example`), `.tmp/`, `data/`, dependencies and build output stay outside Git. Production credentials and execution data remain on the server; cloning this repository does not restore them.
+- This repository stores application source. The optional GitHub snapshot/file source configured in settings is a separate integration.
 
 The current app includes:
 
@@ -17,7 +26,8 @@ The current app includes:
 - A dedicated capture view for fragmentary notes, early ideas, and up to six pasted or uploaded screenshots per record.
 - Markdown + YAML frontmatter import from files such as `findwork/**/*.md`.
 - Frontmatter-only writeback that preserves Markdown body content.
-- A bearer-token REST/OpenAPI API for external platforms and AI tools, backed by the GitHub snapshot.
+- A bearer-token REST/OpenAPI API. With TODOTODOLIST_STATE_PATH enabled, browser and API Item CRUD share the same server state.
+- An iPhone home-screen PWA starting at `/today`, offline feedback queue, append-only corrections, daily digests and an independent execution worker. See [operations and acceptance](docs/execution-operations.md); actual phone delivery and Calendar authorization require separate verification.
 - Local Git repo simulation for development.
 - Optional single-user password login.
 - Google Calendar OAuth helper, event import, local event creation, and safe event writeback.
@@ -84,6 +94,12 @@ GOOGLE_REFRESH_TOKEN=
 GOOGLE_REFRESH_TOKEN_PATH=.tmp/google-calendar-token.json
 GOOGLE_CALENDAR_ID=primary
 GOOGLE_CALENDAR_SECTION=work
+GOOGLE_CALENDAR_WEBHOOK_URL=https://todo.example.com/api/google-calendar/webhook
+GOOGLE_CALENDAR_SYNC_STATE_PATH=.tmp/google-calendar-sync-state.json
+GOOGLE_CALENDAR_FALLBACK_POLL_SECONDS=300
+GOOGLE_CALENDAR_INITIAL_DAYS_BACK=30
+GOOGLE_CALENDAR_INITIAL_DAYS_FORWARD=365
+GOOGLE_CALENDAR_WATCH_TTL_SECONDS=518400
 ```
 
 `TODOTODOLIST_PASSWORD` enables the simple login system. Leave it empty for local development without login. Set `TODOTODOLIST_AUTH_SECRET` to a strong random value in production. By default failed attempts share a safe global rate-limit key because request forwarding headers are client-controlled. Only set `TODOTODOLIST_TRUST_PROXY=true` when the app is behind a trusted reverse proxy; set `TODOTODOLIST_PROXY_HOPS` to the number of trusted proxy hops so the server can select the correct address from `X-Forwarded-For`.
@@ -93,6 +109,8 @@ The Sync view can save the full IndexedDB snapshot to GitHub and read it back fo
 Set `TODOTODOLIST_API_TOKEN` to enable `/api/v1/items` CRUD for external platforms and AI tools. The API uses the configured GitHub snapshot as durable storage, requires a Bearer token (or `X-API-Key`), supports soft deletes and optimistic updates with `ETag` / `If-Match`, and publishes an OpenAPI 3.1 document at `/api/v1/openapi`. `TODOTODOLIST_API_ALLOWED_ORIGINS` is only needed for approved browser-based cross-origin clients. See [`docs/external-api.md`](docs/external-api.md) for setup, curl examples, and the recommended API-vs-direct-GitHub-file architecture.
 
 For Google Calendar, open `/api/google-calendar/oauth/start` and approve access. The callback automatically stores the refresh token at `GOOGLE_REFRESH_TOKEN_PATH`; `GOOGLE_REFRESH_TOKEN` remains a fallback for manual deployments. The Sync view can then import recent Google Calendar events into the workspace calendar. Local scheduled Todo/Event items can be created in Google Calendar from their detail drawer. Google-linked events write back title, description, and schedule changes when you edit, drag, or resize them. Deleting a Google-linked item also deletes the remote Google Calendar event before soft-deleting the local item. Remote cancelled/deleted Google events become local soft deletes on the next import.
+
+For near-real-time two-way sync, expose the HTTPS webhook route at `/api/google-calendar/webhook`, set its absolute public URL in `GOOGLE_CALENDAR_WEBHOOK_URL`, and enable `Google 日历实时同步` in the sidebar. The server registers a renewable Google Events watch channel, uses `nextSyncToken` for incremental pulls, retains unacknowledged changes on disk, and falls back to a periodic incremental poll because Google push delivery is not guaranteed. Persist both `GOOGLE_REFRESH_TOKEN_PATH` and `GOOGLE_CALENDAR_SYNC_STATE_PATH`; a single shared writable volume is required when the app is deployed in a container.
 
 For the complete Google Cloud setup, OAuth authorization, acceptance testing, troubleshooting, and rollback procedure, see [`docs/google-calendar-sop.md`](docs/google-calendar-sop.md).
 
@@ -202,7 +220,18 @@ See [GitHub human-readable file sync](./docs/github-human-files.md) for mapping 
 
 ## Current Limits
 
-- Google Calendar import, local event creation, safe title/description/time writeback, and remote event deletion are available; broader conflict handling and background sync are still pending.
+- Google Calendar supports renewable webhook notifications, incremental `nextSyncToken` pulls, at-least-once browser delivery, local event creation/writeback, and remote deletion. The browser applies queued changes while the workspace is open; multi-instance deployments need a shared/transactional state store instead of the default local state file.
 - The default deployed path should use GitHub API mode, not a full Git clone.
 - Local Git worktree mode is intended for local development and self-hosted deployments.
 - Multi-user auth needs a proper OAuth-backed account system later.
+
+
+## iPhone push and owner feedback (first slice)
+
+Open `/review` to answer check-ins and manage this device's notifications. Follow [`docs/pwa-feedback.md`](docs/pwa-feedback.md) to configure VAPID keys, a persistent `TODOTODOLIST_CHECKIN_PATH`, the public HTTPS origin, and the optional reminder worker. Feedback and push state are server-side files, separate from the GitHub Item snapshot; include them in private backups. The local Goal Tree can publish reviewed check-ins, read feedback, and import a selected owner reply as a node note.
+
+Calendar end times no longer mark items done. Incoming schedule changes preserve the existing item's status; older automatically completed items are not silently reset. Actual completion remains an explicit owner decision. No real calendar-driven reminders or daily AI flow are enabled by this change.
+
+## Goal Tree execution
+
+Use the [execution operations guide](docs/execution-operations.md) for server-authoritative mode, migration, daily backups, iPhone notifications and rollback. `npm run execution:worker` continues synchronization without an open browser. The local CLI and LaunchAgent live in the Goal Tree project.

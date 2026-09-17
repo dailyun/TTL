@@ -21,6 +21,7 @@ export interface AppSettings {
   showAbandonedInBoard: boolean;
   autoPullGitHubSnapshotOnStart: boolean;
   autoPushGitHubSnapshotOnChange: boolean;
+  autoSyncGoogleCalendar?: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -37,7 +38,14 @@ export interface AppSnapshot {
 
 export type SnapshotImportMode = "replace" | "merge";
 
+export interface RuntimeEntry { key: string; value: unknown }
+export interface PendingOperation { id: string; path: string; body: unknown; createdAt: string; error?: string }
+let seedExamples = false;
+export function enableLegacySeed(enabled: boolean) { seedExamples = enabled; }
+
 class TodoTodoListDatabase extends Dexie {
+  runtime!: Table<RuntimeEntry, string>;
+  outbox!: Table<PendingOperation, string>;
   items!: Table<Item, string>;
   sections!: Table<Section, string>;
   settings!: Table<AppSettings, string>;
@@ -49,6 +57,7 @@ class TodoTodoListDatabase extends Dexie {
       sections: "id, sortOrder, archivedAt",
       settings: "id"
     });
+    this.version(2).stores({ items: "id, type, status, sectionId, startAt, updatedAt, source, deletedAt", sections: "id, sortOrder, archivedAt", settings: "id", runtime: "key", outbox: "id, createdAt" });
   }
 }
 
@@ -76,13 +85,14 @@ export async function ensureSeedData(): Promise<void> {
       showAbandonedInBoard: false,
       autoPullGitHubSnapshotOnStart: false,
       autoPushGitHubSnapshotOnChange: false,
+      autoSyncGoogleCalendar: false,
       createdAt: now,
       updatedAt: now
     });
   }
 
   const itemCount = await db.items.count();
-  if (itemCount === 0) {
+  if (itemCount === 0 && seedExamples) {
     await db.items.bulkPut(seedItems());
   }
 }
@@ -191,6 +201,46 @@ export async function importItems(items: Item[]): Promise<void> {
   await ensureSeedData();
   const existingItems = await db.items.bulkGet(items.map((item) => item.id));
   await db.items.bulkPut(filterItemsForImport(items, existingItems));
+}
+
+export async function importGoogleCalendarItems(items: Item[]): Promise<{ importedCount: number }> {
+  await ensureSeedData();
+  const incoming = items.filter(
+    (item) => item.source === "google_calendar" && item.sourceLink?.provider === "google_calendar"
+  );
+
+  return db.transaction("rw", db.items, async () => {
+    const existing = await db.items
+      .where("source")
+      .equals("google_calendar")
+      .toArray();
+    const normalized = reconcileGoogleCalendarItemIds(existing, incoming);
+    const existingById = await db.items.bulkGet(normalized.map((item) => item.id));
+    const records = filterItemsForImport(normalized, existingById);
+    if (records.length) await db.items.bulkPut(records);
+    return { importedCount: records.length };
+  });
+}
+
+export function reconcileGoogleCalendarItemIds(existing: Item[], incoming: Item[]): Item[] {
+  const existingIdsByEvent = new Map<string, Item>();
+  existing.forEach((item) => {
+    const key = googleCalendarEventKey(item);
+    if (key) existingIdsByEvent.set(key, item);
+  });
+
+  return incoming.map((item) => {
+    const key = googleCalendarEventKey(item);
+    const current = key ? existingIdsByEvent.get(key) : undefined;
+    if (!current) return item;
+    return {
+      ...item,
+      id: current.id,
+      createdAt: current.createdAt,
+      // Google owns scheduling, not the owner's execution decision.
+      status: item.deletedAt || current.deletedAt ? item.status : current.status
+    };
+  });
 }
 
 export async function reconcileHumanSourceItems(
@@ -429,6 +479,10 @@ function validateSnapshotItem(value: unknown, index: number): Item {
       validateSnapshotAttachment(attachment, `items[${index}].attachments[${attachmentIndex}]`);
     });
   }
+  if (value.durationMinutes !== undefined && (!Number.isInteger(value.durationMinutes) || Number(value.durationMinutes) < 5 || Number(value.durationMinutes) > 600)) throw new Error(`items[${index}].durationMinutes 无效`);
+  if (value.autoSchedule !== undefined && typeof value.autoSchedule !== "boolean") throw new Error(`items[${index}].autoSchedule 无效`);
+  if (value.recurrence !== undefined && !["daily", "weekdays"].includes(String(value.recurrence))) throw new Error(`items[${index}].recurrence 无效`);
+  if (value.goalTreeLink !== undefined && (!isRecord(value.goalTreeLink) || typeof value.goalTreeLink.treeId !== "string" || typeof value.goalTreeLink.nodeId !== "string")) throw new Error(`items[${index}].goalTreeLink 无效`);
   return value as unknown as Item;
 }
 
@@ -495,6 +549,10 @@ function normalizeAppSettings(settings: AppSettings): AppSettings {
     autoPushGitHubSnapshotOnChange:
       typeof settings.autoPushGitHubSnapshotOnChange === "boolean"
         ? settings.autoPushGitHubSnapshotOnChange
+        : false,
+    autoSyncGoogleCalendar:
+      typeof settings.autoSyncGoogleCalendar === "boolean"
+        ? settings.autoSyncGoogleCalendar
         : false
   };
 }
@@ -508,9 +566,16 @@ function defaultSettings(): AppSettings {
     showAbandonedInBoard: false,
     autoPullGitHubSnapshotOnStart: false,
     autoPushGitHubSnapshotOnChange: false,
+    autoSyncGoogleCalendar: false,
     createdAt: now,
     updatedAt: now
   };
+}
+
+function googleCalendarEventKey(item: Item): string | undefined {
+  if (item.source !== "google_calendar" || item.sourceLink?.provider !== "google_calendar") return undefined;
+  if (!item.sourceLink.calendarId || !item.sourceLink.eventId) return undefined;
+  return `${item.sourceLink.calendarId}\0${item.sourceLink.eventId}`;
 }
 
 function assertString(value: unknown, path: string): asserts value is string {

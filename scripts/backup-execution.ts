@@ -1,0 +1,12 @@
+import fs from "node:fs/promises";
+import path from "node:path";
+import { createHash } from "node:crypto";
+import { withCheckInState, checkInStorePath } from "../src/check-ins/store.js";
+const directory = process.argv[2] || path.join(path.dirname(checkInStorePath()), "backups");
+await fs.mkdir(directory, { recursive: true, mode: 0o700 });
+const backup = await withCheckInState(state => JSON.stringify(state), false);
+const hash = createHash("sha256").update(backup).digest("hex");
+const filename = path.join(directory, `execution-${new Date().toISOString().replaceAll(":", "-")}.json`);
+await fs.writeFile(filename, backup, { mode: 0o600, flag: "wx" });
+await fs.writeFile(`${filename}.sha256`, hash + "\n", { mode: 0o600, flag: "wx" });
+console.log(JSON.stringify({ file: filename, sha256: hash }));

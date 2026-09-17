@@ -10,7 +10,10 @@ export function GET(request: Request) {
     openapi: "/api/v1/openapi",
     resources: {
       items: "/api/v1/items",
-      sections: "/api/v1/sections"
+      sections: "/api/v1/sections",
+      checkIns: "/api/v1/check-ins",
+      feedback: "/api/v1/feedback",
+      reminderDispatch: "/api/v1/notifications/dispatch"
     }
   });
 }

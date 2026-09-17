@@ -35,6 +35,10 @@ export interface GoogleCalendarEventDate {
 }
 
 export interface GoogleCalendarEvent {
+  recurringEventId?: string;
+  originalStartTime?: GoogleCalendarEventDate;
+  transparency?: "opaque" | "transparent";
+  extendedProperties?: { private?: Record<string, string> };
   id: string;
   etag?: string;
   summary?: string;
@@ -49,6 +53,8 @@ export interface GoogleCalendarEvent {
 }
 
 export interface GoogleCalendarEventPatch {
+  id?: string;
+  extendedProperties?: { private?: Record<string, string> };
   description?: string;
   end?: GoogleCalendarEventDate;
   start?: GoogleCalendarEventDate;
@@ -58,6 +64,20 @@ export interface GoogleCalendarEventPatch {
 export interface GoogleCalendarEventsResponse {
   items: GoogleCalendarEvent[];
   nextPageToken?: string;
+  nextSyncToken?: string;
+}
+
+export interface GoogleCalendarEventChanges {
+  events: GoogleCalendarEvent[];
+  nextSyncToken: string;
+}
+
+export interface GoogleCalendarWatchChannel {
+  id: string;
+  resourceId: string;
+  resourceUri?: string;
+  token?: string;
+  expiration?: string;
 }
 
 export class GoogleCalendarApiError extends Error {
@@ -103,6 +123,7 @@ export async function exchangeGoogleCalendarCode(
 ): Promise<GoogleCalendarTokenResponse> {
   const response = await fetch(GOOGLE_TOKEN_URL, {
     method: "POST",
+    signal: AbortSignal.timeout(25_000),
     headers: {
       "content-type": "application/x-www-form-urlencoded"
     },
@@ -127,6 +148,7 @@ export async function refreshGoogleCalendarAccessToken(
 
   const response = await fetch(GOOGLE_TOKEN_URL, {
     method: "POST",
+    signal: AbortSignal.timeout(25_000),
     headers: {
       "content-type": "application/x-www-form-urlencoded"
     },
@@ -164,6 +186,7 @@ export async function listGoogleCalendarEvents(params: {
     const response = await fetch(
       `${GOOGLE_CALENDAR_API}/calendars/${encodeURIComponent(params.calendarId)}/events?${query.toString()}`,
       {
+        signal: AbortSignal.timeout(25_000),
         headers: {
           authorization: `Bearer ${params.accessToken}`
         }
@@ -177,6 +200,112 @@ export async function listGoogleCalendarEvents(params: {
   return events;
 }
 
+export async function listGoogleCalendarEventChanges(params: {
+  accessToken: string;
+  calendarId: string;
+  syncToken?: string;
+  timeMin?: string;
+  timeMax?: string;
+}): Promise<GoogleCalendarEventChanges> {
+  const events: GoogleCalendarEvent[] = [];
+  let pageToken: string | undefined;
+  let nextSyncToken: string | undefined;
+
+  do {
+    const query = new URLSearchParams({
+      maxResults: "250",
+      showDeleted: "true",
+      singleEvents: "true"
+    });
+    if (params.syncToken) {
+      query.set("syncToken", params.syncToken);
+    } else {
+      if (params.timeMin) query.set("timeMin", params.timeMin);
+      if (params.timeMax) query.set("timeMax", params.timeMax);
+    }
+    if (pageToken) query.set("pageToken", pageToken);
+
+    const response = await fetch(
+      `${GOOGLE_CALENDAR_API}/calendars/${encodeURIComponent(params.calendarId)}/events?${query.toString()}`,
+      {
+        signal: AbortSignal.timeout(25_000),
+        headers: {
+          authorization: `Bearer ${params.accessToken}`
+        }
+      }
+    );
+    const payload = await parseGoogleResponse<GoogleCalendarEventsResponse>(response);
+    events.push(...(payload.items ?? []));
+    pageToken = payload.nextPageToken;
+    nextSyncToken = payload.nextSyncToken ?? nextSyncToken;
+  } while (pageToken);
+
+  if (!nextSyncToken) {
+    throw new Error("Google Calendar sync response did not include nextSyncToken");
+  }
+
+  return { events, nextSyncToken };
+}
+
+export async function watchGoogleCalendarEvents(params: {
+  accessToken: string;
+  calendarId: string;
+  channelId: string;
+  address: string;
+  token: string;
+  expiration: number;
+}): Promise<GoogleCalendarWatchChannel> {
+  const response = await fetch(
+    `${GOOGLE_CALENDAR_API}/calendars/${encodeURIComponent(params.calendarId)}/events/watch`,
+    {
+      method: "POST",
+    signal: AbortSignal.timeout(25_000),
+      headers: {
+        authorization: `Bearer ${params.accessToken}`,
+        "content-type": "application/json"
+      },
+      body: JSON.stringify({
+        id: params.channelId,
+        type: "web_hook",
+        address: params.address,
+        token: params.token,
+        expiration: String(params.expiration)
+      })
+    }
+  );
+
+  return parseGoogleResponse<GoogleCalendarWatchChannel>(response);
+}
+
+export async function stopGoogleCalendarWatchChannel(params: {
+  accessToken: string;
+  channelId: string;
+  resourceId: string;
+}): Promise<void> {
+  const response = await fetch(`${GOOGLE_CALENDAR_API}/channels/stop`, {
+    method: "POST",
+    signal: AbortSignal.timeout(25_000),
+    headers: {
+      authorization: `Bearer ${params.accessToken}`,
+      "content-type": "application/json"
+    },
+    body: JSON.stringify({
+      id: params.channelId,
+      resourceId: params.resourceId
+    })
+  });
+
+  if (response.status === 404 || response.status === 410) return;
+  if (!response.ok) await parseGoogleResponse<unknown>(response);
+}
+
+export async function getGoogleCalendarEvent(params: { accessToken: string; calendarId: string; eventId: string }): Promise<GoogleCalendarEvent> {
+  const response = await fetch(`${GOOGLE_CALENDAR_API}/calendars/${encodeURIComponent(params.calendarId)}/events/${encodeURIComponent(params.eventId)}`, {
+    headers: { authorization: `Bearer ${params.accessToken}` }, signal: AbortSignal.timeout(25_000)
+  });
+  return parseGoogleResponse<GoogleCalendarEvent>(response);
+}
+
 export async function patchGoogleCalendarEvent(params: {
   accessToken: string;
   calendarId: string;
@@ -188,6 +317,7 @@ export async function patchGoogleCalendarEvent(params: {
     `${GOOGLE_CALENDAR_API}/calendars/${encodeURIComponent(params.calendarId)}/events/${encodeURIComponent(params.eventId)}?sendUpdates=none`,
     {
       method: "PATCH",
+      signal: AbortSignal.timeout(25_000),
       headers: {
         authorization: `Bearer ${params.accessToken}`,
         "content-type": "application/json",
@@ -209,6 +339,7 @@ export async function createGoogleCalendarEvent(params: {
     `${GOOGLE_CALENDAR_API}/calendars/${encodeURIComponent(params.calendarId)}/events?sendUpdates=none`,
     {
       method: "POST",
+    signal: AbortSignal.timeout(25_000),
       headers: {
         authorization: `Bearer ${params.accessToken}`,
         "content-type": "application/json"
@@ -230,6 +361,7 @@ export async function deleteGoogleCalendarEvent(params: {
     `${GOOGLE_CALENDAR_API}/calendars/${encodeURIComponent(params.calendarId)}/events/${encodeURIComponent(params.eventId)}?sendUpdates=none`,
     {
       method: "DELETE",
+      signal: AbortSignal.timeout(25_000),
       headers: {
         authorization: `Bearer ${params.accessToken}`,
         ...(params.etag ? { "if-match": params.etag } : {})
@@ -290,7 +422,8 @@ export function googleCalendarEventToItem(params: {
     title: params.event.summary?.trim() || "未命名日程",
     description: googleEventDescription(params.event),
     sectionId: params.sectionId,
-    status: isGoogleCalendarEventComplete(params.event, now) ? "done" : "active",
+    // Calendar time is a plan; only actual user feedback can establish completion.
+    status: "active",
     tags: ["google-calendar"],
     startAt,
     endAt,
@@ -361,23 +494,6 @@ function googleEndDateToIso(
     return allDayIsoFromDateKey(addDaysToDateKey(end.date, -1));
   }
   return endDate;
-}
-
-function isGoogleCalendarEventComplete(event: GoogleCalendarEvent, now: Date): boolean {
-  if (event.end?.dateTime) {
-    return new Date(event.end.dateTime).getTime() <= now.getTime();
-  }
-
-  const today = now.toISOString().slice(0, 10);
-  if (event.end?.date) {
-    return event.end.date <= today;
-  }
-
-  if (event.start?.dateTime) {
-    return new Date(event.start.dateTime).getTime() <= now.getTime();
-  }
-
-  return Boolean(event.start?.date && event.start.date < today);
 }
 
 function googleEventDescription(event: GoogleCalendarEvent): string {

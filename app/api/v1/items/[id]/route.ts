@@ -26,7 +26,7 @@ export async function GET(request: Request, context: RouteContext) {
     assertExternalApiAuthorized(request);
     const id = externalItemIdSchema.parse((await context.params).id);
     const includeDeleted = new URL(request.url).searchParams.get("includeDeleted") === "true";
-    const stored = await readExternalApiSnapshot(githubClientFromEnv());
+    const stored = await readExternalApiSnapshot((process.env.TODOTODOLIST_STATE_PATH ? undefined : githubClientFromEnv()));
     const item = findExternalItem(stored?.snapshot ?? createEmptySnapshot(), id, includeDeleted);
 
     return externalApiJson(
@@ -45,7 +45,7 @@ export async function PATCH(request: Request, context: RouteContext) {
     const id = externalItemIdSchema.parse((await context.params).id);
     const patch = externalItemPatchSchema.parse(await request.json());
     const mutation = await mutateExternalApiSnapshot({
-      client: githubClientFromEnv(),
+      client: (process.env.TODOTODOLIST_STATE_PATH ? undefined : githubClientFromEnv()),
       message: `Update TodoTodoList item ${id}`,
       mutate(snapshot) {
         const result = updateExternalItem(snapshot, id, patch, request.headers.get("if-match") ?? undefined);
@@ -71,7 +71,7 @@ export async function DELETE(request: Request, context: RouteContext) {
     assertExternalApiAuthorized(request);
     const id = externalItemIdSchema.parse((await context.params).id);
     const mutation = await mutateExternalApiSnapshot({
-      client: githubClientFromEnv(),
+      client: (process.env.TODOTODOLIST_STATE_PATH ? undefined : githubClientFromEnv()),
       message: `Delete TodoTodoList item ${id}`,
       mutate(snapshot) {
         const result = deleteExternalItem(snapshot, id, request.headers.get("if-match") ?? undefined);

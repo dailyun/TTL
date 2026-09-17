@@ -39,6 +39,10 @@ export interface Item {
   source: "local" | "github" | "google_calendar";
   sourceLink?: ItemSourceLink;
   parentId?: string;
+  goalTreeLink?: { treeId: string; nodeId: string };
+  durationMinutes?: number;
+  autoSchedule?: boolean;
+  recurrence?: "daily" | "weekdays";
   createdAt: string;
   updatedAt: string;
   deletedAt?: string;

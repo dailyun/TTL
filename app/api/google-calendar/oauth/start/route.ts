@@ -4,6 +4,7 @@ import {
   googleCalendarConfigFromEnv
 } from "../../../../../src/index.js";
 import { jsonError } from "../../../github/_shared.js";
+import { canonicalGoogleOAuthRedirect } from "../../../../../src/google-calendar/oauth-browser.js";
 
 export const runtime = "nodejs";
 
@@ -11,10 +12,13 @@ const STATE_COOKIE = "tdl_google_oauth_state";
 
 export function GET(request: Request) {
   try {
+    const canonical = canonicalGoogleOAuthRedirect(request);
+    if (canonical) return canonical;
     const config = googleCalendarConfigFromEnv();
     const state = crypto.randomUUID();
     const response = NextResponse.redirect(buildGoogleCalendarAuthUrl(config, state));
     response.headers.set("cache-control", "no-store");
+    response.headers.set("referrer-policy", "no-referrer");
     response.headers.set(
       "set-cookie",
       [

@@ -1,4 +1,5 @@
 import { readStoredGoogleCalendarRefreshToken } from "../../../../src/google-calendar/token-store.js";
+import { getGoogleCalendarRealtimeStatus } from "../../../../src/google-calendar/realtime.js";
 
 export const runtime = "nodejs";
 
@@ -17,7 +18,8 @@ export function GET() {
     hasRefreshToken: Boolean(refreshToken),
     redirectUri: redirectUri || undefined,
     calendarId: process.env.GOOGLE_CALENDAR_ID || "primary",
-    sectionId: process.env.GOOGLE_CALENDAR_SECTION || "work"
+    sectionId: process.env.GOOGLE_CALENDAR_SECTION || "work",
+    realtime: getGoogleCalendarRealtimeStatus()
   }, {
     headers: {
       "cache-control": "no-store"

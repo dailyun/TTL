@@ -1,6 +1,6 @@
 # 对外 REST / OpenAPI 接口
 
-TodoTodoList 提供一个面向其他平台、自动化流程和 AI 工具的 HTTP API。接口负责鉴权、字段校验、软删除和 GitHub 写入冲突重试；数据继续保存在项目已使用的 GitHub snapshot 中。
+TodoTodoList 提供一个面向其他平台、自动化流程和 AI 工具的 HTTP API。接口负责鉴权、字段校验、软删除和 GitHub 写入冲突重试；Item 数据继续保存在 GitHub snapshot 中；新增回顾与反馈保存在服务端持久文件中，见下文和 [PWA 运行说明](pwa-feedback.md)。
 
 ## 1. 为什么优先使用 API，而不是让平台直接改 GitHub 文件
 
@@ -212,3 +212,10 @@ API 写入的是 `GITHUB_SNAPSHOT_PATH` 指向的 snapshot。网页端有三种�
 - **只做内容投递的工具**：可以写入 `findwork/**/*.md`，然后走现有 human-file import；不要直接编辑 snapshot。
 
 当前 API 聚焦 Item CRUD，版块暂时只读。以后如需完整工具协议，可在稳定的 service 层上继续增加 MCP server，而无需改变底层 GitHub snapshot 格式。
+
+
+## 回顾、通知与实际反馈（首版）
+
+除 Item CRUD 外，`/api/v1/check-ins` 提供 GET/POST，`/api/v1/check-ins/{id}` 接受带 `version` 的改期/取消 PATCH，`/api/v1/feedback` 按 `after/limit` 读取本人反馈，`/api/v1/notifications/dispatch` 供提醒进程检查到期记录。这些均需 Bearer 鉴权，具体负载见 OpenAPI 和 [运行说明](pwa-feedback.md)。
+
+反馈的新增只能通过本站已登录本人页面（Cookie 与同站 Origin），API token 不可冒充本人回答。反馈不会自动完成 Item 或目标节点。回顾和 Google 事件尚未自动关联，不能把更新回顾当成已经更新 Google。新增文件需要单独持久化与私密备份；不写入 GitHub snapshot。

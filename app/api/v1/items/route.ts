@@ -19,7 +19,7 @@ export async function GET(request: Request) {
     assertExternalApiAuthorized(request);
     const url = new URL(request.url);
     const query = externalItemListQuerySchema.parse(Object.fromEntries(url.searchParams));
-    const stored = await readExternalApiSnapshot(githubClientFromEnv());
+    const stored = await readExternalApiSnapshot((process.env.TODOTODOLIST_STATE_PATH ? undefined : githubClientFromEnv()));
     const result = listExternalItems(stored?.snapshot ?? createEmptySnapshot(), query);
 
     return externalApiJson(request, {
@@ -42,7 +42,7 @@ export async function POST(request: Request) {
     const input = externalItemCreateSchema.parse(await request.json());
     const id = input.id ?? crypto.randomUUID();
     const mutation = await mutateExternalApiSnapshot({
-      client: githubClientFromEnv(),
+      client: (process.env.TODOTODOLIST_STATE_PATH ? undefined : githubClientFromEnv()),
       message: `Create TodoTodoList item ${id}`,
       mutate(snapshot) {
         const result = createExternalItem(snapshot, input, id);

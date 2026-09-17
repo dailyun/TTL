@@ -2,6 +2,12 @@ node_modules/
 dist/
 .next/
 .tmp/
+data/
 .env*
 !.env.example
 .DS_Store
+
+# Local tool output
+__pycache__/
+*.py[cod]
+*.tsbuildinfo

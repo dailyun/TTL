@@ -6,8 +6,10 @@ import {
   GoogleCalendarApiError,
   googleCalendarEventToItem,
   googleCalendarPatchFromItem,
+  listGoogleCalendarEventChanges,
   listGoogleCalendarEvents,
-  patchGoogleCalendarEvent
+  patchGoogleCalendarEvent,
+  watchGoogleCalendarEvents
 } from "../src/google-calendar/client.js";
 
 test("maps timed Google Calendar events to workspace items", () => {
@@ -39,7 +41,7 @@ test("maps timed Google Calendar events to workspace items", () => {
   assert.match(item.description, /Meeting Room/);
 });
 
-test("marks imported Google Calendar events as done after their end time", () => {
+test("keeps past Google Calendar events pending actual execution feedback", () => {
   const item = googleCalendarEventToItem({
     calendarId: "primary",
     sectionId: "work",
@@ -53,7 +55,7 @@ test("marks imported Google Calendar events as done after their end time", () =>
   });
 
   assert.ok(item);
-  assert.equal(item.status, "done");
+  assert.equal(item.status, "active");
 });
 
 test("keeps active Google Calendar events active before their end time", () => {
@@ -91,7 +93,7 @@ test("maps all-day Google Calendar end dates from exclusive to inclusive", () =>
   assert.equal(item.endAt, "2026-07-08T00:00:00.000Z");
 });
 
-test("marks imported all-day events as done after their exclusive end date", () => {
+test("does not infer completion from an all-day event ending", () => {
   const item = googleCalendarEventToItem({
     calendarId: "primary",
     sectionId: "work",
@@ -105,7 +107,7 @@ test("marks imported all-day events as done after their exclusive end date", () 
   });
 
   assert.ok(item);
-  assert.equal(item.status, "done");
+  assert.equal(item.status, "active");
 });
 
 test("maps cancelled Google Calendar events to local delete markers", () => {
@@ -320,6 +322,83 @@ test("lists Google Calendar events including deleted events", async () => {
     const url = new URL(requests[0]);
     assert.equal(url.searchParams.get("showDeleted"), "true");
     assert.equal(url.searchParams.get("singleEvents"), "true");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("paginates incremental Google Calendar changes and returns the next sync token", async () => {
+  const originalFetch = globalThis.fetch;
+  const requests: string[] = [];
+  globalThis.fetch = (async (input: string | URL | Request) => {
+    requests.push(String(input));
+    const url = new URL(String(input));
+    const pageToken = url.searchParams.get("pageToken");
+    return new Response(JSON.stringify(pageToken
+      ? { items: [{ id: "second" }], nextSyncToken: "next-sync-token" }
+      : { items: [{ id: "first" }], nextPageToken: "page-2" }), {
+      headers: { "content-type": "application/json" },
+      status: 200
+    });
+  }) as typeof fetch;
+
+  try {
+    const result = await listGoogleCalendarEventChanges({
+      accessToken: "access-token",
+      calendarId: "primary",
+      syncToken: "previous-sync-token"
+    });
+
+    assert.deepEqual(result.events.map((event) => event.id), ["first", "second"]);
+    assert.equal(result.nextSyncToken, "next-sync-token");
+    assert.equal(requests.length, 2);
+    requests.forEach((request) => {
+      const url = new URL(request);
+      assert.equal(url.searchParams.get("syncToken"), "previous-sync-token");
+      assert.equal(url.searchParams.has("timeMin"), false);
+      assert.equal(url.searchParams.has("timeMax"), false);
+      assert.equal(url.searchParams.get("showDeleted"), "true");
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("creates a Google Calendar event watch channel", async () => {
+  const originalFetch = globalThis.fetch;
+  let request: { input: string; init?: RequestInit } | undefined;
+  globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+    request = { input: String(input), init };
+    return new Response(JSON.stringify({
+      id: "channel-id",
+      resourceId: "resource-id",
+      expiration: "1780000000000"
+    }), {
+      headers: { "content-type": "application/json" },
+      status: 200
+    });
+  }) as typeof fetch;
+
+  try {
+    const channel = await watchGoogleCalendarEvents({
+      accessToken: "access-token",
+      calendarId: "primary",
+      channelId: "channel-id",
+      address: "https://todo.example.com/api/google-calendar/webhook",
+      token: "channel-token",
+      expiration: 1780000000000
+    });
+
+    assert.equal(channel.resourceId, "resource-id");
+    assert.match(request?.input ?? "", /calendars\/primary\/events\/watch$/);
+    assert.equal(request?.init?.method, "POST");
+    assert.deepEqual(JSON.parse(String(request?.init?.body)), {
+      id: "channel-id",
+      type: "web_hook",
+      address: "https://todo.example.com/api/google-calendar/webhook",
+      token: "channel-token",
+      expiration: "1780000000000"
+    });
   } finally {
     globalThis.fetch = originalFetch;
   }

@@ -4,6 +4,8 @@
 
 ## 文档
 
+- [iPhone PWA 推送与回顾](./pwa-feedback.md)：首版部署、持久化卷、提醒进程、回顾 API、本机反馈与真机验收。
+
 - [产品方案](./product-plan.md)：产品定位、用户、功能范围、Google Calendar 与 GitHub 私有库调研结论。
 - [PRD](./prd.md)：MVP 用户故事、验收标准、功能优先级和非目标。
 - [页面与交互结构](./ux-structure.md)：首页、快速新增、列表、看板、日历、设置等页面设计。

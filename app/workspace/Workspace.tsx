@@ -57,6 +57,7 @@ import {
   ensureSeedData,
   exportSnapshot,
   getAppSettings,
+  importGoogleCalendarItems,
   importItems,
   reconcileHumanSourceItems,
   importSnapshot,
@@ -74,6 +75,7 @@ import {
   updateSection
 } from "../../src/local-db/db.js";
 import { summarizeSourceFiles, type SourceFileSummary } from "../../src/sync/source-summary.js";
+import { syncServerWorkspace, isServerMode, browserApi, pendingOperations } from "../../src/sync/server-workspace.js";
 import { GitHubSourcePanel } from "../settings/github/GitHubSourcePanel.js";
 
 export type ViewMode = "home" | "notes" | "list" | "board" | "calendar" | "sync";
@@ -89,6 +91,17 @@ type GoogleCalendarStatus = {
   redirectUri?: string;
   calendarId: string;
   sectionId: string;
+  realtime: {
+    webhookConfigured: boolean;
+    channelActive: boolean;
+    channelExpiration?: string;
+    channelNeedsRenewal: boolean;
+    hasSyncToken: boolean;
+    lastFullSyncAt?: string;
+    lastIncrementalSyncAt?: string;
+    lastNotificationAt?: string;
+    pendingItemCount: number;
+  };
 };
 
 type GoogleCalendarCreateResult = {
@@ -144,6 +157,8 @@ const WEEKDAY_LABELS = ["周一", "周二", "周三", "周四", "周五", "周�
 const SECTION_COLORS = ["#6b7280", "#276c63", "#b7532f", "#5c6f82", "#7c5c2e", "#6f4b7c", "#2f6f9f"];
 
 export function Workspace({ initialView = "home" }: { initialView?: ViewMode }) {
+  const [serverNotice, setServerNotice] = useState("正在连接服务器…");
+  const [syncModeReady, setSyncModeReady] = useState(false);
   const [items, setItems] = useState<Item[]>([]);
   const [sections, setSections] = useState<Section[]>([]);
   const [allSections, setAllSections] = useState<Section[]>([]);
@@ -168,6 +183,10 @@ export function Workspace({ initialView = "home" }: { initialView?: ViewMode }) 
     status: "idle" | "loading" | "success" | "error";
     message?: string;
   }>({ status: "idle" });
+  const [googleRealtimeState, setGoogleRealtimeState] = useState<{
+    status: "idle" | "loading" | "success" | "error";
+    message?: string;
+  }>({ status: "idle" });
   const [localChangeRevision, setLocalChangeRevision] = useState(0);
   const [pendingSnapshot, setPendingSnapshot] = useState<{
     fileName: string;
@@ -189,18 +208,29 @@ export function Workspace({ initialView = "home" }: { initialView?: ViewMode }) 
   });
 
   useEffect(() => {
-    void refresh();
+    let stopped = false;
+    const sync = async () => {
+      try {
+        const result = await syncServerWorkspace();
+        if (!stopped) setServerNotice(result ? (result.conflicts.length ? `${result.conflicts.length} 项数据冲突待处理 → 今日` : "事项已与服务器同步") : "本机模式");
+      } catch (error) { if (!stopped) setServerNotice(`待同步：${error instanceof Error ? error.message : "网络不可用"}`); }
+      finally { if (!stopped) { setSyncModeReady(true); await refresh(); } }
+    };
+    void sync();
+    const timer = window.setInterval(() => void sync(), 5000);
+    window.addEventListener("online", sync); window.addEventListener("focus", sync);
+    return () => { stopped = true; window.clearInterval(timer); window.removeEventListener("online", sync); window.removeEventListener("focus", sync); };
   }, []);
 
   useEffect(() => {
-    if (!settings?.autoPullGitHubSnapshotOnStart || autoPullGitHubSnapshotStartedRef.current) return;
+    if (!syncModeReady || isServerMode() || !settings?.autoPullGitHubSnapshotOnStart || autoPullGitHubSnapshotStartedRef.current) return;
 
     autoPullGitHubSnapshotStartedRef.current = true;
     void mergeGitHubSnapshotOnStart();
-  }, [settings?.autoPullGitHubSnapshotOnStart]);
+  }, [syncModeReady, settings?.autoPullGitHubSnapshotOnStart]);
 
   useEffect(() => {
-    if (!settings?.autoPushGitHubSnapshotOnChange || localChangeRevision === 0) return;
+    if (!syncModeReady || isServerMode() || !settings?.autoPushGitHubSnapshotOnChange || localChangeRevision === 0) return;
 
     setGitHubSnapshotAutoSaveState({
       status: "loading",
@@ -212,6 +242,109 @@ export function Workspace({ initialView = "home" }: { initialView?: ViewMode }) 
 
     return () => window.clearTimeout(timeout);
   }, [localChangeRevision, settings?.autoPushGitHubSnapshotOnChange]);
+
+  useEffect(() => {
+    if (!syncModeReady || isServerMode() || !settings?.autoSyncGoogleCalendar) {
+      setGoogleRealtimeState({ status: "idle" });
+      return;
+    }
+
+    let stopped = false;
+    let syncInFlight = false;
+    let watchError: string | undefined;
+
+    async function ensureWatch() {
+      const response = await fetch("/api/google-calendar/realtime/start", { method: "POST" });
+      const payload = (await response.json().catch(() => ({}))) as { error?: string };
+      if (!response.ok) throw new Error(payload.error ?? "启动 Google Calendar 实时通知失败");
+      watchError = undefined;
+    }
+
+    async function synchronizeGoogleCalendar() {
+      if (stopped || syncInFlight) return;
+      syncInFlight = true;
+      try {
+        const response = await fetch("/api/google-calendar/realtime/sync", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ action: "sync" })
+        });
+        const payload = (await response.json().catch(() => ({}))) as {
+          deliveryVersion?: number;
+          items?: Item[];
+          mode?: "full" | "incremental" | "skipped";
+          error?: string;
+        };
+        if (!response.ok || !Array.isArray(payload.items) || !Number.isInteger(payload.deliveryVersion)) {
+          throw new Error(payload.error ?? "Google Calendar 增量同步失败");
+        }
+
+        const imported = await importGoogleCalendarItems(payload.items);
+        if (payload.items.length > 0) {
+          const acknowledgement = await fetch("/api/google-calendar/realtime/sync", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              action: "ack",
+              deliveryVersion: payload.deliveryVersion
+            })
+          });
+          if (!acknowledgement.ok) throw new Error("Google Calendar 同步确认失败，将自动重试");
+        }
+        if (imported.importedCount > 0) await refreshAfterLocalChange();
+        if (!stopped) {
+          setGoogleRealtimeState({
+            status: watchError ? "error" : "success",
+            message: watchError
+              ? `${watchError}；当前仅使用兜底增量轮询`
+              : imported.importedCount > 0
+                ? `已实时同步 ${imported.importedCount} 条 Google 日程`
+                : "Google Calendar 实时同步运行中"
+          });
+        }
+      } catch (error) {
+        if (!stopped) {
+          setGoogleRealtimeState({
+            status: "error",
+            message: error instanceof Error ? error.message : "Google Calendar 实时同步失败"
+          });
+        }
+      } finally {
+        syncInFlight = false;
+      }
+    }
+
+    setGoogleRealtimeState({ status: "loading", message: "正在启动 Google Calendar 实时同步..." });
+    void ensureWatch()
+      .catch((error) => {
+        watchError = error instanceof Error ? error.message : "启动 Google Calendar 实时通知失败";
+        if (!stopped) {
+          setGoogleRealtimeState({
+            status: "error",
+            message: watchError
+          });
+        }
+      })
+      .finally(() => void synchronizeGoogleCalendar());
+
+    const syncTimer = window.setInterval(() => void synchronizeGoogleCalendar(), 5000);
+    const watchTimer = window.setInterval(() => {
+      void ensureWatch().catch((error) => {
+        watchError = error instanceof Error ? error.message : "续订 Google Calendar 实时通知失败";
+      });
+    }, 6 * 60 * 60 * 1000);
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") void synchronizeGoogleCalendar();
+    };
+    document.addEventListener("visibilitychange", onVisibilityChange);
+
+    return () => {
+      stopped = true;
+      window.clearInterval(syncTimer);
+      window.clearInterval(watchTimer);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
+  }, [syncModeReady, settings?.autoSyncGoogleCalendar]);
 
   async function refresh() {
     await ensureSeedData();
@@ -233,6 +366,11 @@ export function Workspace({ initialView = "home" }: { initialView?: ViewMode }) 
   async function refreshAfterLocalChange() {
     setLocalChangeRevision((revision) => revision + 1);
     await refresh();
+    if (isServerMode()) {
+      setServerNotice("待同步…");
+      try { await syncServerWorkspace(); setServerNotice("事项已与服务器同步"); await refresh(); }
+      catch { setServerNotice("待同步：本机内容已保存，联网后重试"); }
+    }
   }
 
   async function submitItem(event: FormEvent<HTMLFormElement>) {
@@ -308,7 +446,7 @@ export function Workspace({ initialView = "home" }: { initialView?: ViewMode }) 
         return false;
       }
     }
-    if (canAutoWriteBackGoogleCalendar(nextItem, patch)) {
+    if (!isServerMode() && canAutoWriteBackGoogleCalendar(nextItem, patch)) {
       try {
         const writeback = await writeBackGoogleCalendarEvent(nextItem);
         if (writeback.etag) {
@@ -342,6 +480,12 @@ export function Workspace({ initialView = "home" }: { initialView?: ViewMode }) 
   }
 
   async function createGoogleCalendarEventForItem(item: Item) {
+    if (isServerMode()) {
+      await syncServerWorkspace();
+      await browserApi("/api/workspace", { type: "calendar_create", operationId: `calendar:${crypto.randomUUID()}`, id: item.id, expectedUpdatedAt: item.updatedAt });
+      setSyncNotice({ status: "success", message: "已保存日历请求，后台确认后会在今日页显示；失败可重试。" });
+      await refreshAfterLocalChange(); return;
+    }
     const response = await fetch("/api/google-calendar/create-event", {
       method: "POST",
       headers: {
@@ -377,6 +521,7 @@ export function Workspace({ initialView = "home" }: { initialView?: ViewMode }) 
   }
 
   async function deleteGoogleCalendarEventForItem(item: Item) {
+    if (isServerMode()) return; // The owner deletion is persisted with the item, then queued on the server.
     if (item.source !== "google_calendar" || item.sourceLink?.provider !== "google_calendar") return;
 
     const response = await fetch("/api/google-calendar/delete-event", {
@@ -405,6 +550,24 @@ export function Workspace({ initialView = "home" }: { initialView?: ViewMode }) 
     const nextSettings = await updateAppSettings(patch);
     setSettings(nextSettings);
     setLocalChangeRevision((revision) => revision + 1);
+  }
+
+  async function setGoogleCalendarRealtimeEnabled(enabled: boolean) {
+    if (isServerMode()) { setSyncNotice({ status: "success", message: "日历由服务器独立同步，连接状态请查看今日页。" }); return; }
+    await saveSettings({ autoSyncGoogleCalendar: enabled });
+    if (enabled) return;
+
+    try {
+      const response = await fetch("/api/google-calendar/realtime/stop", { method: "POST" });
+      const payload = (await response.json().catch(() => ({}))) as { error?: string };
+      if (!response.ok) throw new Error(payload.error ?? "停止 Google Calendar 实时通知失败");
+      setGoogleRealtimeState({ status: "idle" });
+    } catch (error) {
+      setSyncNotice({
+        status: "error",
+        message: error instanceof Error ? error.message : "停止 Google Calendar 实时通知失败"
+      });
+    }
   }
 
   async function saveSection(section: Section, patch: Partial<Pick<Section, "name" | "color">>) {
@@ -616,6 +779,7 @@ export function Workspace({ initialView = "home" }: { initialView?: ViewMode }) 
   }
 
   async function logout() {
+    navigator.serviceWorker?.controller?.postMessage({ type: "CLEAR_PRIVATE_CACHE" });
     await fetch("/api/auth/logout", { method: "POST" }).catch(() => undefined);
     window.location.href = "/login";
   }
@@ -716,6 +880,9 @@ export function Workspace({ initialView = "home" }: { initialView?: ViewMode }) 
           <NavButton active={view === "board"} icon={<LayoutDashboard size={17} />} label="看板" onClick={() => changeView("board")} />
           <NavButton active={view === "calendar"} icon={<CalendarDays size={17} />} label="日历" onClick={() => changeView("calendar")} />
           <NavButton active={view === "sync"} icon={<GitBranch size={17} />} label="同步" onClick={() => changeView("sync")} />
+          <a className="nav-link" href="/today"><CalendarDays size={17} />今日与执行反馈</a>
+          <p style={{ fontSize: 12, padding: "0 12px", overflowWrap: "anywhere" }} role="status">{serverNotice}</p>
+          <a className="nav-link" href="/review"><NotebookPen size={17} />提醒与回顾</a>
         </nav>
 
         <div className={`sidebar-tools ${mobileToolsOpen ? "open" : ""}`} id="sidebar-tools">
@@ -798,6 +965,19 @@ export function Workspace({ initialView = "home" }: { initialView?: ViewMode }) 
               />
               变更后保存 GitHub 快照
             </label>
+            <label className="side-toggle">
+              <input
+                type="checkbox"
+                checked={Boolean(settings?.autoSyncGoogleCalendar)}
+                onChange={(event) => void setGoogleCalendarRealtimeEnabled(event.target.checked)}
+              />
+              Google 日历实时同步
+            </label>
+            {googleRealtimeState.message ? (
+              <p className={`sync-message ${googleRealtimeState.status}`}>
+                {googleRealtimeState.message}
+              </p>
+            ) : null}
             {githubSnapshotAutoSaveState.message ? (
               <p className={`sync-message ${githubSnapshotAutoSaveState.status}`}>
                 {githubSnapshotAutoSaveState.message}
@@ -2670,7 +2850,7 @@ function SyncView({
         throw new Error("Google Calendar 导入结果缺少事项数据");
       }
 
-      await importItems(payload.items);
+      await importGoogleCalendarItems(payload.items);
       await onImported();
       setGoogleImportState({
         status: "success",
@@ -3163,6 +3343,16 @@ function GoogleCalendarStatusCard({
           <dd>{status.oauthConfigured ? "已配置" : "未配置完整"}</dd>
           <dt>Token</dt>
           <dd>{status.hasRefreshToken ? "已配置" : "未配置"}</dd>
+          <dt>实时同步</dt>
+          <dd>
+            {status.realtime.channelActive
+              ? "推送通道运行中"
+              : status.realtime.webhookConfigured
+                ? "等待启动"
+                : "未配置 Webhook"}
+          </dd>
+          <dt>最近同步</dt>
+          <dd>{formatDateTime(status.realtime.lastIncrementalSyncAt ?? status.realtime.lastFullSyncAt) || "尚无"}</dd>
         </dl>
       ) : null}
     </section>

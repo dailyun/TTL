@@ -4,6 +4,7 @@ import {
   buildHumanSourceReconciliation,
   filterItemsForImport,
   mergeSnapshots,
+  reconcileGoogleCalendarItemIds,
   validateSnapshot
 } from "../src/local-db/db.js";
 import type { Item } from "../src/domain/types.js";
@@ -140,6 +141,7 @@ test("normalizes old snapshot settings without GitHub snapshot automation prefer
   const snapshot = validateSnapshot(oldSnapshot);
   assert.equal(snapshot.settings[0]?.autoPullGitHubSnapshotOnStart, false);
   assert.equal(snapshot.settings[0]?.autoPushGitHubSnapshotOnChange, false);
+  assert.equal(snapshot.settings[0]?.autoSyncGoogleCalendar, false);
 });
 
 test("rejects snapshots from another app or unsupported versions", () => {
@@ -266,6 +268,17 @@ test("reconciles missing human-source records as soft deletes", () => {
   assert.equal(result.records.find((record) => record.id === "checkbox")?.deletedAt, now);
 });
 
+test("reuses a local item id when its linked Google event is pulled back", () => {
+  const existing = googleItem("local-random-id", "event-123", "本地创建");
+  const incoming = googleItem("google_primary_event-123", "event-123", "Google 已更新");
+
+  const [reconciled] = reconcileGoogleCalendarItemIds([existing], [incoming]);
+
+  assert.equal(reconciled?.id, "local-random-id");
+  assert.equal(reconciled?.title, "Google 已更新");
+  assert.equal(reconciled?.createdAt, existing.createdAt);
+});
+
 function item(input: { id: string; title: string; updatedAt: string }): Item {
   return {
     id: input.id,
@@ -290,6 +303,20 @@ function humanItem(id: string, sourcePath: string): Item {
       sourceId: "findwork",
       sourcePath,
       writeBack: "frontmatter-only"
+    }
+  };
+}
+
+function googleItem(id: string, eventId: string, title: string): Item {
+  return {
+    ...item({ id, title, updatedAt: "2026-07-07T12:00:00.000Z" }),
+    source: "google_calendar",
+    sourceLink: {
+      provider: "google_calendar",
+      sourceId: "google-calendar",
+      calendarId: "primary",
+      eventId,
+      writeBack: "none"
     }
   };
 }

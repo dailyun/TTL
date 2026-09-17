@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "sources": [{
+    "id": "findwork",
+    "label": "Find Work (fictional fixture)",
+    "path": "findwork/**/*.md",
+    "mode": "read-write",
+    "defaultSectionId": "work",
+    "defaultType": "idea",
+    "defaultStatus": "wanted",
+    "importCheckboxes": true,
+    "writeBack": "frontmatter-only"
+  }]
+}

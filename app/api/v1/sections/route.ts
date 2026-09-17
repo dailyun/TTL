@@ -8,7 +8,7 @@ export const runtime = "nodejs";
 export async function GET(request: Request) {
   try {
     assertExternalApiAuthorized(request);
-    const stored = await readExternalApiSnapshot(githubClientFromEnv());
+    const stored = await readExternalApiSnapshot((process.env.TODOTODOLIST_STATE_PATH ? undefined : githubClientFromEnv()));
     const snapshot = stored?.snapshot ?? createEmptySnapshot();
     const sections = snapshot.sections
       .filter((section) => !section.archivedAt)

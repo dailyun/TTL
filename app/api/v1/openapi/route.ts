@@ -16,12 +16,38 @@ function openApiDocument(origin: string) {
     openapi: "3.1.0",
     info: {
       title: "TodoTodoList External API",
-      version: "1.0.0",
-      description: "CRUD API for TodoTodoList items. Data is persisted in the configured GitHub snapshot."
+      version: "1.1.0",
+      description: "Canonical server file stores items, occurrences, calendar jobs and owner feedback. GitHub snapshots remain optional imports/exports. See docs/execution-operations.md."
     },
     servers: [{ url: `${origin}/api/v1` }],
     security: [{ bearerAuth: [] }],
     paths: {
+      "/actions": {
+        get: { operationId: "readExecutionWorkspace", summary: "Read canonical snapshot, occurrences, reviews, jobs and connection status", responses: { "200": jsonResponse({ type: "object" }), "401": errorResponse(), "503": errorResponse() } },
+        post: { operationId: "publishSelectedAction", summary: "Publish an already selected action; durable steps reported separately", requestBody: jsonRequest({ $ref: "#/components/schemas/PublishAction" }), responses: { "200": jsonResponse({ type: "object" }), "400": errorResponse(), "409": errorResponse(), "412": errorResponse() } }
+      },
+      "/schedule": { get: { operationId: "readExecutionSchedule", summary: "Read daily schedule, waiting actions and calendar write status", responses: { "200": jsonResponse({ type: "object" }), "401": errorResponse() } } },
+      "/changes": { get: { operationId: "readExecutionChanges", summary: "Read ordered durable change feed", parameters: [queryParameter("after", { type: "integer", minimum: 0, default: 0 }), queryParameter("limit", { type: "integer", minimum: 1, maximum: 200, default: 100 })], responses: { "200": jsonResponse({ type: "object" }), "401": errorResponse() } } },
+      "/daily": {
+        get: { operationId: "readDailyWorkspace", summary: "Read daily view including latest AI suggestions and their real timestamps", responses: { "200": jsonResponse({ type: "object" }) } },
+        post: { operationId: "saveValidatedDailyBrief", summary: "Save local Codex summary referencing only active selected actions", requestBody: jsonRequest({ type: "object", additionalProperties: false, required: ["id", "date", "summary", "actionIds", "createdAt"], properties: { id: { type: "string" }, date: { type: "string", format: "date" }, summary: { type: "string", minLength: 1, maxLength: 4000 }, actionIds: { type: "array", maxItems: 100, items: { type: "string" } }, createdAt: { type: "string", format: "date-time" }, usage: {} } }), responses: { "200": jsonResponse({ type: "object" }), "409": errorResponse() } }
+      },
+      "/planner-status": { post: { operationId: "recordLocalPlannerHeartbeat", summary: "Record local bridge availability without claiming a new analysis", requestBody: jsonRequest({ type: "object", additionalProperties: false, properties: { lastError: { type: ["string", "null"], maxLength: 500 } } }), responses: { "200": jsonResponse({ type: "object" }) } } },
+      "/execution/tick": { post: { operationId: "runExecutionWorker", summary: "Process sync, selected schedules, durable jobs and nonempty daily digests", responses: { "200": jsonResponse({ type: "object" }) } } },
+      "/check-ins": {
+        get: { operationId: "listCheckIns", summary: "List latest 200 check-ins (optionally one ID)", parameters: [queryParameter("id", { type: "string" })], responses: { "200": jsonResponse({ type: "object" }), "401": errorResponse() } },
+        post: { operationId: "createCheckIn", summary: "Publish one selected check-in; same ID and payload are idempotent", requestBody: jsonRequest({ $ref: "#/components/schemas/CreateCheckIn" }), responses: { "201": jsonResponse({ type: "object" }), "400": errorResponse(), "409": errorResponse() } }
+      },
+      "/check-ins/{id}": {
+        parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
+        patch: { operationId: "updateCheckIn", summary: "Reschedule or cancel a pending check-in with its current version", requestBody: jsonRequest({ type: "object", additionalProperties: false, required: ["version"], properties: { version: { type: "integer", minimum: 1 }, dueAt: { type: "string", format: "date-time" }, status: { const: "cancelled" } }, anyOf: [{ required: ["dueAt"] }, { required: ["status"] }] }), responses: { "200": jsonResponse({ type: "object" }), "404": errorResponse(), "409": errorResponse(), "412": errorResponse() } }
+      },
+      "/feedback": {
+        get: { operationId: "listOwnerFeedback", summary: "Read owner-submitted feedback in ascending sequence order", parameters: [queryParameter("after", { type: "integer", minimum: 0, default: 0 }), queryParameter("limit", { type: "integer", minimum: 1, maximum: 200, default: 100 }), queryParameter("id", { type: "string" })], responses: { "200": jsonResponse({ type: "object", properties: { data: { type: "array", items: { type: "object" } }, nextCursor: { type: "integer" }, hasMore: { type: "boolean" } } }), "401": errorResponse() } }
+      },
+      "/notifications/dispatch": {
+        post: { operationId: "dispatchDueCheckIns", summary: "Worker: dispatch due notifications; does not create plans or feedback", responses: { "200": jsonResponse({ type: "object" }), "401": errorResponse(), "503": errorResponse() } }
+      },
       "/items": {
         get: {
           operationId: "listItems",
@@ -118,6 +144,15 @@ function openApiDocument(origin: string) {
         bearerAuth: { type: "http", scheme: "bearer", bearerFormat: "API token" }
       },
       schemas: {
+        PublishAction: { type: "object", additionalProperties: false, required: ["operationId", "id", "title", "goalTreeLink"], properties: {
+          operationId: { type: "string", description: "Stable retry ID; reusing it with different content returns 409." }, id: { type: "string" }, title: { type: "string", minLength: 1, maxLength: 200 }, description: { type: "string", maxLength: 5000 },
+          goalTreeLink: { type: "object", additionalProperties: false, required: ["treeId", "nodeId"], properties: { treeId: { type: "string" }, nodeId: { type: "string" } } },
+          durationMinutes: { type: "integer", minimum: 5, maximum: 600 }, autoSchedule: { type: "boolean", default: true }, recurrence: { type: "string", enum: ["daily", "weekdays"] }, status: { $ref: "#/components/schemas/ItemStatus" }, expectedUpdatedAt: { type: "string", description: "Required when updating an existing action; use its latest updatedAt." }
+        } },
+        CreateCheckIn: { type: "object", additionalProperties: false, required: ["id", "title", "prompt", "dueAt"], properties: {
+          id: { type: "string", maxLength: 128, pattern: "^[A-Za-z0-9][A-Za-z0-9._:-]*$" }, title: { type: "string", minLength: 1, maxLength: 200 }, prompt: { type: "string", minLength: 1, maxLength: 1000 }, dueAt: { type: "string", format: "date-time" }, itemId: { type: "string" }, occurrenceId: { type: "string" },
+          goalTreeLink: { type: "object", additionalProperties: false, required: ["treeId", "nodeId"], properties: { treeId: { type: "string" }, nodeId: { type: "string" } } }
+        } },
         ItemType: { type: "string", enum: ["todo", "idea", "event", "avoid", "note"] },
         ItemStatus: { type: "string", enum: ["wanted", "active", "paused", "abandoned", "done"] },
         Item: {

@@ -2,6 +2,7 @@ node_modules
 .next
 dist
 .tmp
+data
 .git
 .env
 .env.*
