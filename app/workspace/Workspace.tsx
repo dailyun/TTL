@@ -17,6 +17,7 @@ import {
   LayoutDashboard,
   Lightbulb,
   LogOut,
+  MoreHorizontal,
   NotebookPen,
   Plus,
   RefreshCw,
@@ -212,7 +213,7 @@ export function Workspace({ initialView = "home" }: { initialView?: ViewMode }) 
     const sync = async () => {
       try {
         const result = await syncServerWorkspace();
-        if (!stopped) setServerNotice(result ? (result.conflicts.length ? `${result.conflicts.length} 项数据冲突待处理 → 今日` : "事项已与服务器同步") : "本机模式");
+        if (!stopped) setServerNotice(result ? (result.conflicts.length ? `${result.conflicts.length} 项数据冲突待处理` : "事项已与服务器同步") : "本机模式");
       } catch (error) { if (!stopped) setServerNotice(`待同步：${error instanceof Error ? error.message : "网络不可用"}`); }
       finally { if (!stopped) { setSyncModeReady(true); await refresh(); } }
     };
@@ -881,11 +882,18 @@ export function Workspace({ initialView = "home" }: { initialView?: ViewMode }) 
           <NavButton active={view === "calendar"} icon={<CalendarDays size={17} />} label="日历" onClick={() => changeView("calendar")} />
           <NavButton active={view === "sync"} icon={<GitBranch size={17} />} label="同步" onClick={() => changeView("sync")} />
           <a className="nav-link" href="/today"><CalendarDays size={17} />今日与执行反馈</a>
-          <p style={{ fontSize: 12, padding: "0 12px", overflowWrap: "anywhere" }} role="status">{serverNotice}</p>
           <a className="nav-link" href="/review"><NotebookPen size={17} />提醒与回顾</a>
         </nav>
 
         <div className={`sidebar-tools ${mobileToolsOpen ? "open" : ""}`} id="sidebar-tools">
+          <nav className="mobile-tools-nav" aria-label="更多视图">
+            <NavButton active={view === "list"} icon={<ClipboardList size={17} />} label="全部事项" onClick={() => changeView("list")} />
+            <NavButton active={view === "notes"} icon={<NotebookPen size={17} />} label="沉淀" onClick={() => {
+              setTypeFilter("all"); setStatusFilter("all"); setTimeFilter("all"); changeView("notes");
+            }} />
+            <NavButton active={view === "board"} icon={<LayoutDashboard size={17} />} label="看板" onClick={() => changeView("board")} />
+            <NavButton active={view === "sync"} icon={<GitBranch size={17} />} label="同步" onClick={() => changeView("sync")} />
+          </nav>
           <section className="side-section">
             <div className="side-title">版块</div>
             {sections.map((section) => (
@@ -992,7 +1000,21 @@ export function Workspace({ initialView = "home" }: { initialView?: ViewMode }) 
         </div>
       </aside>
 
+      {/* Keep the fixed navigation outside the sidebar's backdrop-filter containing block. */}
+      <nav className="mobile-bottom-nav" aria-label="手机主导航">
+        <NavButton active={view === "home"} icon={<Inbox size={19} />} label="首页" onClick={() => changeView("home")} />
+        <a className="nav-link" href="/today"><Check size={19} />今日</a>
+        <NavButton active={view === "calendar"} icon={<CalendarDays size={19} />} label="日历" onClick={() => changeView("calendar")} />
+        <a className="nav-link" href="/review"><NotebookPen size={19} />回顾</a>
+        <button className={`nav-link ${mobileToolsOpen || !["home", "calendar"].includes(view) ? "active" : ""}`}
+          type="button" aria-controls="sidebar-tools" aria-expanded={mobileToolsOpen}
+          onClick={() => setMobileToolsOpen((open) => !open)}><MoreHorizontal size={19} />更多</button>
+      </nav>
+
       <section className="workspace">
+        <div className="workspace-sync-status" role="status">
+          <span>{serverNotice}</span><a href="/today">查看同步详情<ChevronRight size={14} /></a>
+        </div>
         <header className={`topbar ${mobileFiltersOpen ? "filters-open" : ""}`}>
           <div className="searchbox">
             <Search size={17} />
@@ -1744,7 +1766,7 @@ function NavButton(props: {
   onClick: () => void;
 }) {
   return (
-    <button className={`nav-link ${props.active ? "active" : ""}`} type="button" onClick={props.onClick}>
+    <button className={`nav-link ${props.active ? "active" : ""}`} type="button" aria-current={props.active ? "page" : undefined} onClick={props.onClick}>
       {props.icon}
       {props.label}
     </button>

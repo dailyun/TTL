@@ -1025,6 +1025,7 @@ pre {
   color: var(--muted);
   font-size: 13px;
   line-height: 1.5;
+  overflow-wrap: anywhere;
 }
 
 .item-actions {
@@ -2315,6 +2316,31 @@ body {
 }
 
 /* Mobile-first workspace revision: content leads, navigation and settings recede. */
+.mobile-bottom-nav,
+.mobile-tools-nav {
+  display: none;
+}
+
+.workspace-sync-status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin-bottom: 12px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.workspace-sync-status a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 32px;
+  color: var(--accent-strong);
+}
+
 .sidebar-header {
   display: flex;
   align-items: flex-start;
@@ -2566,13 +2592,17 @@ body {
   }
 
   .sidebar > .nav-list {
+    display: none;
+  }
+
+  .mobile-bottom-nav {
     position: fixed;
     right: 0;
     bottom: 0;
     left: 0;
     z-index: 50;
     display: grid;
-    height: calc(64px + env(safe-area-inset-bottom));
+    min-height: calc(64px + env(safe-area-inset-bottom));
     grid-template-columns: repeat(5, minmax(0, 1fr));
     gap: 0;
     overflow: visible;
@@ -2585,7 +2615,7 @@ body {
     -webkit-backdrop-filter: blur(18px);
   }
 
-  .sidebar > .nav-list .nav-link {
+  .mobile-bottom-nav .nav-link {
     position: relative;
     display: flex;
     min-width: 0;
@@ -2598,15 +2628,17 @@ body {
     color: var(--muted);
     font-size: 11px;
     font-weight: 800;
+    white-space: nowrap;
+    text-align: center;
   }
 
-  .sidebar > .nav-list .nav-link.active {
+  .mobile-bottom-nav .nav-link.active {
     background: transparent;
     color: var(--accent-strong);
     box-shadow: none;
   }
 
-  .sidebar > .nav-list .nav-link.active::before {
+  .mobile-bottom-nav .nav-link.active::before {
     position: absolute;
     top: 0;
     width: 22px;
@@ -2634,6 +2666,19 @@ body {
 
   .sidebar-tools.open {
     display: grid;
+  }
+
+  .mobile-tools-nav {
+    display: grid;
+    grid-column: 1 / -1;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    padding-bottom: 14px;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .mobile-tools-nav .nav-link {
+    min-height: 44px;
   }
 
   .sidebar-tools .side-section {

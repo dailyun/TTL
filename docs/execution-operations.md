@@ -96,3 +96,13 @@ sudo python3 /opt/todotodolist/app/scripts/rollback-execution.py \
 更换公开域名时，同步维护 `TODOTODOLIST_PUBLIC_URL`。如果 Google 控制台已添加新的 callback，可再统一 `GOOGLE_REDIRECT_URI`，届时无需域名中转。不能通过取消 state 检查来修复连接问题。缺失、过期或不匹配的 state 返回中文重试页，重新从当前站点授权入口开始。
 
 本人随后已在 Google 客户端添加 `.win` 回调 URI。本次服务器将 `GOOGLE_REDIRECT_URI` 与 webhook 一并统一到 `.win`，正常流程不再经过旧域名。域名中转逻辑仅用于以后配置迁移；当前请从 `.win` 重新开始授权。
+
+## 手机导航修复（2026-09-18）
+
+iPhone 截图显示：本应固定在底部的导航落到了顶部，并且 8 个入口和同步提示挤进固定的五列高度。导航原本位于带 `backdrop-filter` 的侧栏中，该祖先会影响 fixed 定位；手机导航现已移到侧栏外，保留五个入口：首页、今日、日历、回顾、更多。全部事项、沉淀、看板、同步放在“更多”面板，桌面继续显示完整侧栏。同步/冲突提示移到内容区，长日历链接允许换行。
+
+验证使用独立演示数据（16 条事项、13 项冲突）：320、375、420、860、861、1280 像素宽度无页面横向溢出；滚动后底部位置稳定，菜单切换与关闭正常，今日/回顾在窄屏下正常。TypeScript 检查与生产构建通过，隔离容器和线上均核对了导航结构、五个入口及实际 CSS。桌面浏览器的宽度检查不代替 iPhone 真机复核。
+
+当前发布目录 `/opt/todotodolist/releases/mobile-nav-20260918`，镜像 `todotodolist:mobile-nav-20260918`；app healthy、worker running。上线后核对事项和反馈 ID 无缺失，Google 同步无错误。代码修复没有处理或覆盖用户的数据冲突。
+
+本次回退材料：`/opt/todotodolist/backups/pre-mobile-nav-20260918` 的原 Compose/环境文件，`/data/backups/pre-mobile-nav-20260918` 的一致性数据备份，以及 `todotodolist:before-mobile-nav-20260918` 旧镜像。仅回退界面时恢复原 Compose，并把 `app` 指回 `releases/execution-20260917`，执行 `docker compose up -d --no-build`；不要用备份覆盖线上新反馈和授权。手机联网完全退出 Web App 后重新打开以加载新资源，不需清除网站数据。
