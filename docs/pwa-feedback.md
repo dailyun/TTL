@@ -1,6 +1,6 @@
 # iPhone 推送与回顾：首版部署说明
 
-更新：2026-09-17。首版代码已实现；线上部署与 iPhone 锁屏接收尚待验证。本人提供的网站是 `https://wanting.furina.win`，部署方式尚未确认。
+本文保留独立回顾服务的部署方式。完整事项、日历和后台执行流程见 [完整联动运行说明](execution-operations.md)。文中域名、路径及事项均为示例，实际账号、设备和部署验收记录应私密保存。
 
 ## 已有能力与边界
 
@@ -10,7 +10,7 @@
 - Bearer API 创建、改期、取消回顾和读取反馈；本机目标树 CLI 可以逐条导入本人反馈为节点备注。不会据此自动完成整个节点。
 - Google 事件时间已过不再自动设为完成；同步保留已有事项的本人状态。以前产生的完成状态未批量重置，需本人核对。
 
-**仍待实现：** 目标树完整事项派发、Google 事件与回顾的自动关联/改期、每日待办生成、晨晚询问规则、反馈的本机持续消费。当前改期 API 只修改回顾时间，不改 Google 日程。此版本没有自动创建真实健身提醒。
+**仍待实现：** 目标树完整事项派发、Google 事件与回顾的自动关联/改期、每日待办生成、晨晚询问规则、反馈的本机持续消费。当前改期 API 只修改回顾时间，不改 Google 日程。独立回顾服务不会创建 Google 日程。
 
 现有 Item 仍使用 IndexedDB + GitHub snapshot。新回顾、订阅、发送记录与原始反馈统一保存为服务端 JSON；它们不进入浏览器 snapshot，也不随现有 GitHub 导出一起备份。只支持单服务器的持久化磁盘/本机卷；Vercel 等临时文件系统不支持此存储版本。
 
@@ -19,7 +19,7 @@
 保留已有部署、登录与 Google/GitHub 配置，新增以下环境变量。不要把凭据发到对话或提交到 Git。
 
 ```dotenv
-TODOTODOLIST_PUBLIC_URL=https://wanting.furina.win
+TODOTODOLIST_PUBLIC_URL=https://todo.example.com
 TODOTODOLIST_CHECKIN_PATH=/data/check-ins.json
 # 已有独立 API token，可复用；和网页登录密码分开
 TODOTODOLIST_API_TOKEN=<在服务器的私密环境配置中设置>
@@ -30,7 +30,7 @@ TODOTODOLIST_API_TOKEN=<在服务器的私密环境配置中设置>
 在项目目录生成一次 VAPID 密钥，脚本只写权限为 `0600` 的新文件，不打印密钥、不覆盖旧文件：
 
 ```sh
-npm run push:keys -- --subject https://wanting.furina.win --output .env.web-push
+npm run push:keys -- --subject https://todo.example.com --output .env.web-push
 ```
 
 `.env.web-push` 包含 `WEB_PUSH_SUBJECT`、`WEB_PUSH_PUBLIC_KEY`、`WEB_PUSH_PRIVATE_KEY`。把它保存在服务器的私密配置中并备份；后续部署复用原密钥。改变密钥需要设备重新订阅。`data/`、`.tmp/` 与私密 `.env*` 已排除 Git 和 Docker 构建上下文。
@@ -77,7 +77,7 @@ node --env-file=.env scripts/reminder-worker.mjs
 
 ## 4. 本机目标树的调用方式
 
-在本机私密环境设置 `TODOTODOLIST_URL=https://wanting.furina.win` 与相同的 `TODOTODOLIST_API_TOKEN`，不需要 Google 凭据。工具项目中执行：
+在本机私密环境设置 `TODOTODOLIST_URL=https://todo.example.com` 与相同的 `TODOTODOLIST_API_TOKEN`，不需要 Google 凭据。工具项目中执行：
 
 ```sh
 python3 -m goal_tree todo-feedback --after 0 --limit 100
@@ -123,4 +123,4 @@ python3 -m goal_tree todo-import-feedback FEEDBACK_ID
 - 页面提示服务端未配置：检查 VAPID 三项环境变量；最近检查时间为空：启动提醒进程并查看其 HTTP 错误。
 - 401：重新登录或检查 API token；403：检查 HTTPS Origin/公开地址；500：查看卷权限/JSON 损坏，勿删除文件来掩盖故障。
 - 暂停通知：先停止 reminders 进程；页面和反馈保留。回退应用前备份文件，保留相同 VAPID 密钥；已进入推送服务的请求无法撤回。
-- 当前验证记录：Todo 自动测试 91 项通过、类型检查与生产构建通过；本机虚构事项的浏览器回复、刷新持久化、CLI 导入与重复去重已通过；390px 表单布局、版本冲突和本人反馈鉴权已检查。iPhone 锁屏、真实 Google 关联及线上部署待验。
+- 每次部署分别验证浏览器回复、刷新持久化、导入去重、移动布局与鉴权；iPhone 锁屏通知和实际 Google 关联需独立验收。实例的验收结果与数据数量不写入公共仓库。

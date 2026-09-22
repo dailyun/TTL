@@ -60,7 +60,9 @@ node --import tsx scripts/backup-execution.ts /data/backups
 
 恢复时先停止 app 和 worker；校验备份 SHA-256，复制到新的数据目录，用隔离容器读取并核对 ID、反馈及关联，再切换挂载目录。保留故障后的数据供合并，不覆盖用户恢复期间新增的反馈。重试队列和游标与同一备份一起恢复，不能只还原其中一部分。
 
-本机线上保留旧镜像 `todotodolist:pre-execution-20260917` 和 `/opt/todotodolist/backups/pre-execution-*`。回退：停止新 worker → 保存当前数据 → 恢复原 Compose/环境文件 → 使用旧镜像启动原 app（仍为 127.0.0.1:3030）→ 检查 `/api/health` 与登录。旧版不理解新执行文件；保留新文件及反馈，不丢弃。原 Caddy、域名、Google 授权和其他服务不需要修改。
+回退前保存当前镜像标识、Compose、环境文件、运行数据和当前 release 位置；这些记录只放私密运维目录。停止 app/worker 后核对旧版本是否理解现有数据结构，再恢复兼容的镜像与配置，检查 `/api/health`、登录和后台。保留最新数据与授权，不能用旧 JSON 覆盖之后新增的反馈。已有新有限期计划时，不应直接启动不理解它的旧 worker。
+
+仓库中的历史回退脚本适用于其指定的旧目录布局。其他部署应先检查实际参数和备份结构，不照搬默认目录执行。真实服务器地址、账号、域名、备份路径与校验清单不属于公共操作示例。
 
 ## 故障定位
 
@@ -71,62 +73,17 @@ node --import tsx scripts/backup-execution.ts /data/backups
 - 模型失败：反馈已记录，分析队列保留；不影响服务器提醒。实际用量存于本机运行状态，未知不填 0。
 - 通知 `accepted`：推送服务接受，不是手机送达证据；真机需分别验证锁屏接收和点击回复。
 
+## OAuth 与公开域名
 
-### 可执行回退（当前服务器）
+`TODOTODOLIST_PUBLIC_URL` 应与用户打开的站点一致；Google 控制台的注册回调与 `GOOGLE_REDIRECT_URI` 一致。迁移域名时，旧入口只能转到固定配置的公开地址，再核验登录和 state Cookie，不允许任意目标跳转或跳过 state 校验。缺失、过期或不匹配的 state 应重新从当前站点发起授权。
 
-先检查所需旧镜像、备份与目录；检查不会停服务：
+## 手机导航与历史日程
 
-```sh
-sudo python3 /opt/todotodolist/app/scripts/rollback-execution.py \
-  --backup /opt/todotodolist/backups/pre-execution-20260917T153020Z
-```
+移动端导航放在会影响 fixed 定位的模糊侧栏之外，固定五个入口，其余视图通过“更多”访问。同步冲突提示在内容区域显示；今日页优先展示执行回顾，再展示迁移冲突。长链接允许换行。
 
-需要回退时，在同一命令末尾加 `--apply`。脚本先停止新 app/worker，私密备份当前数据和 Compose，再恢复旧 app、原 Compose 与旧环境，使用保留镜像启动。它保留现有 `/data` 和最新 Google 授权，不用旧数据覆盖新反馈。检查 `curl --fail http://127.0.0.1:3030/api/health`，再检查登录。
+已结束且状态仍为 active 的 Google 导入事件单列“历史待确认”，不混入“正在”；本人完成、搁置、放弃状态保留。日程结束不是完成证据。布局需分别验证窄屏、滚动、菜单操作和 iPhone 实机。
 
-重新进入新版：找到脚本输出的 `before-rollback-*` 目录，停止旧 Compose；恢复该目录的 `docker-compose.yml`、`execution.env`，将 `app` 符号链接改回 `release-path.txt` 指向的目录，执行 `docker compose up -d`。不要覆盖现存 data。回退期间旧版新改动仍须重新导入并审阅冲突；不会静默丢弃新版已有反馈。
-
-每日私密备份位于 `/data/backups/YYYY-MM-DD/`，包含统一执行文件、Google 授权、同步状态及 SHA-256 清单；备份错误在状态接口可见。完整主机灾难恢复仍需异机保存 `/opt/todotodolist/backups` 和 `/opt/todotodolist/data/backups`，这些目录含私密凭据，不提交 Git。
-
-
-## OAuth 域名迁移修复（2026-09-18）
-
-实际故障：公开站点是 `wanting.furina.win`，旧 Google 配置的 `GOOGLE_REDIRECT_URI` 仍为 `wanting.furina.club`。浏览器的 state Cookie 不能跨这两个域名读取，因此旧回调报 `Google callback state mismatch`。
-
-现有 Google 注册回调保持不变：旧域名的 OAuth start/callback 只会 303 转到 `TODOTODOLIST_PUBLIC_URL` 配置的固定公开域名，随后照常检查当前站点登录和 state Cookie。旧回调不读取或保存授权结果；code 交换仍使用 Google 已注册的原 redirect_uri。只转发 code/state/error，禁止用户输入目标 URL，并设置 no-store/no-referrer。
-
-更换公开域名时，同步维护 `TODOTODOLIST_PUBLIC_URL`。如果 Google 控制台已添加新的 callback，可再统一 `GOOGLE_REDIRECT_URI`，届时无需域名中转。不能通过取消 state 检查来修复连接问题。缺失、过期或不匹配的 state 返回中文重试页，重新从当前站点授权入口开始。
-
-本人随后已在 Google 客户端添加 `.win` 回调 URI。本次服务器将 `GOOGLE_REDIRECT_URI` 与 webhook 一并统一到 `.win`，正常流程不再经过旧域名。域名中转逻辑仅用于以后配置迁移；当前请从 `.win` 重新开始授权。
-
-## 手机导航修复（2026-09-18）
-
-iPhone 截图显示：本应固定在底部的导航落到了顶部，并且 8 个入口和同步提示挤进固定的五列高度。导航原本位于带 `backdrop-filter` 的侧栏中，该祖先会影响 fixed 定位；手机导航现已移到侧栏外，保留五个入口：首页、今日、日历、回顾、更多。全部事项、沉淀、看板、同步放在“更多”面板，桌面继续显示完整侧栏。同步/冲突提示移到内容区，长日历链接允许换行。
-
-验证使用独立演示数据（16 条事项、13 项冲突）：320、375、420、860、861、1280 像素宽度无页面横向溢出；滚动后底部位置稳定，菜单切换与关闭正常，今日/回顾在窄屏下正常。TypeScript 检查与生产构建通过，隔离容器和线上均核对了导航结构、五个入口及实际 CSS。桌面浏览器的宽度检查不代替 iPhone 真机复核。
-
-当前发布目录 `/opt/todotodolist/releases/mobile-nav-20260918`，镜像 `todotodolist:mobile-nav-20260918`；app healthy、worker running。上线后核对事项和反馈 ID 无缺失，Google 同步无错误。代码修复没有处理或覆盖用户的数据冲突。
-
-本次回退材料：`/opt/todotodolist/backups/pre-mobile-nav-20260918` 的原 Compose/环境文件，`/data/backups/pre-mobile-nav-20260918` 的一致性数据备份，以及 `todotodolist:before-mobile-nav-20260918` 旧镜像。仅回退界面时恢复原 Compose，并把 `app` 指回 `releases/execution-20260917`，执行 `docker compose up -d --no-build`；不要用备份覆盖线上新反馈和授权。手机联网完全退出 Web App 后重新打开以加载新资源，不需清除网站数据。
-
-## 历史 Google 日程分类（2026-09-18，已部署）
-
-已结束、原状态仍为 active 的 Google 导入事件，在首页和看板单列“历史待确认”，不计入“正在”；全部事项支持对应筛选与标签。旧记录同样适用，页面每分钟及恢复焦点时重新判断；改期至未来后恢复当前分类。全天事件在含结束日在内的整个日期过去后才归为历史。已完成、搁置、放弃等本人状态以及本机目标树行动不被覆盖；不回写 Google、不迁移或批量改写历史完成状态。
-
-本机验证：114 项测试、TypeScript 检查和生产构建通过。独立演示页面核对过去事件在首页“正在”为 0、历史待确认为 1，看板分类一致；手动完成演示事件后“完成”为 1、历史待确认为 0。已部署线上，未进行 iPhone 真机复核。
-
-部署入口：`ssh ubuntu@51.79.157.90`，由现有服务器账号登录并使用 sudo；凭据不保存到源码或文档。当前 `/opt/todotodolist/app` 指向 `releases/calendar-history-20260918`，app 和 worker 使用 `todotodolist:calendar-history-20260918`。镜像内 114 项测试通过，公网健康检查与含“历史待确认”的新版 JS 资源均返回 200；只读核对 48 条事项、1 条反馈无缺失，原始事项状态无改写，8 条历史事件归入历史待确认。
-
-本次配置回退材料：`/opt/todotodolist/backups/pre-calendar-history-20260918T052625Z`；一致性数据备份：`/data/backups/pre-calendar-history-20260918`。仅回退界面时恢复备份 Compose，把 app 链接改回 `releases/mobile-nav-20260918`，然后执行 `docker compose up -d --no-build`；不要覆盖现有数据。
-
-## 迁移冲突来源与回顾顺序（2026-09-23）
-
-只读核对线上 13 条 open 冲突，来自 9 月 18 日的两次 device_migration。9 条当前只存在 createdAt/updatedAt 差异；其余涉及两个预置示例事项的删除/时间差异，以及两份 default 设置的自动 GitHub 快照开关差异。前五项 ID 是预置示例事项；inbox/life/work 是默认版块，default 是设置对象。客户端首次同步提交本地缓存，服务端按完整对象比较；不同 operationId 分别保存冲突，所以初始化时间差也会触发冲突，同名实体可出现多条。不是 13 个真实行动都需要重新决定。
-
-按本人要求，把今日页“回顾实际发生的事”移到“迁移 / 同步冲突”前面。本次不自动选择版本、不清除冲突、不改同步算法。
-
-已发布 `todotodolist:review-order-20260923`，当前 app 链接为 `releases/review-order-20260923`。以线上 calendar-history-20260918 为基础仅交换两个区域，未包含本机其他在途修改。独立生产构建通过；公网健康和新版 JS 返回 200，新资源中回顾区域先于冲突区域。部署后 73 条事项无缺失，13 条冲突及本人反馈原样保留。配置回退目录 `/opt/todotodolist/backups/pre-review-order-20260922T183005Z`，数据备份 `/data/backups/pre-review-order-20260923`；回退使用 calendar-history-20260918 镜像，不覆盖最新数据。本机全项目类型检查被其他在途的 app/api/v1/openapi/route.ts 语法错误阻塞，未把此结果视为本次独立版本失败或改动相关 API。
-
-## 公共日历接口（2026-09-23）
+## 公共日历接口
 
 目标树各本机会话经同一私密 API 凭据使用 `/api/v1/calendar`，不依赖会话 Google 连接器。GET 必须提供 from/until（含截止日），可按 treeId/nodeId 筛选；Google 不可用时返回 503，不拿旧缓存当新空档。POST 的 kind 为 plan/link/move/cancel，精确参数见 OpenAPI 1.2.0 和 `src/execution/calendar-api.ts`。
 
@@ -136,16 +93,12 @@ iPhone 截图显示：本应固定在底部的导航落到了顶部，并且 8 �
 - move/cancel 需要当前 occurrence 版本和节点关联；Google 写入使用 etag，避免覆盖本人改期。Google 接受写入但回应丢失时，通过稳定事件 ID / 写入标识核对后重试；不把其他手动改动当自己的成功。
 - applied 只表示持久化成功，calendarConfirmed 与 jobs 表示 Google 结果；失败不能当成功。本机队列由既有登录服务重试，版本冲突保留待处理。新有限期计划不自动随节点暂停而批量撤销，暂停整组需明确选择执行范围并逐项取消。
 
-服务器仅接收选定标题、稳定 ID 和安排参数，本机档案与完整材料不外发。仅限同一已配置账号的主日历。命令、Skill 入口与授权边界见目标树 `docs/calendar-operations.md`。
+服务器仅接收选定标题、稳定 ID 和安排参数，本机档案与完整材料不外发。仅限同一已配置账号的主日历。客户端命令、Skill 入口与授权边界由使用者的本机规划项目管理。
 
-### 公共日历上线与回退记录
+## 验证与公开记录范围
 
-2026-09-23 已发布 `/opt/todotodolist/releases/calendar-api-20260923`，app 链接及 app/worker 镜像均切至 `todotodolist:calendar-api-20260923`，镜像 `sha256:b16f995e94dd448403d8e7408c3ea048fadd7ad086ecec0b2fb54bdb0dfefac9`。保留同日 review-order 版本的回顾区排序，没有用旧基线覆盖它。同步错误为空，app healthy、worker running。
+发布前运行测试、TypeScript 检查与生产构建；隔离验证鉴权、日期、Google 不可用、重复请求、改期竞争和恢复。真实部署时核对事项 ID、状态、附件和反馈不丢失，并单独验收手机通知及早晚周期。测试通过或推送服务接受请求不能代替实际使用验收。
 
-验证：125 项 Todo 测试、161 项本机目标树测试、TypeScript 与生产构建通过；镜像内公共日历 11 项测试通过。隔离 HTTP 校验未鉴权 401、非法日期 400、缺 Google 配置 503。跨目录本机 CLI 成功读取真实 Google 范围，并关联既有 20 次执行与 20 份回顾；重复相同绑定未创建新事件。补齐旧导入记录缺失的 Google 确认标记，保留时间和反馈。核对线上 73 条事项、9 条原始反馈的 ID、状态、附件与内容无损；13 条既有迁移冲突仍保留。本轮不制造真实完成反馈、不改变实际安排，不以这些检查代替 iPhone 收到通知或真实早晚周期。
+公开文档记录功能、约束和复现方法。实例的服务器地址、用户目录、设备/反馈数量、个人安排、真实 ID、备份清单和发布日志保留在私密运维记录中。不要把线上状态快照粘贴回本文件。
 
-最新回退基线为 `review-order-20260923`，不是更早的 calendar-history。配置与私密环境备份：`/opt/todotodolist/backups/pre-calendar-api-20260923-final`；旧镜像别名 `todotodolist:before-calendar-api-20260923-final`。锁内数据备份：`/data/backups/pre-calendar-api-20260923-final/execution-2026-09-22T18-33-43.262Z.json`，SHA-256 `a539cba186e5bc42cb72e324ca56dcde60b61d6f6c88e4084487517ab963fab8`。更早的 pre-calendar-api-20260923 保留完整私密数据归档。
-
-本轮只关联已有系列，没有新建 calendarPlans。如后续已使用新有限期计划，不应直接启动不理解新计划的旧 worker；先停写，核对并迁移新状态。仅对本轮绑定版本回退时，停止 app/worker，私密备份当前 data 与配置；恢复上述 final 目录的 Compose，把 app 符号链接改为 releases/review-order-20260923，再 `sudo docker compose -f /opt/todotodolist/docker-compose.yml up -d --no-build`。保留当前 execution.env、data 与最新授权，不拿旧 JSON 覆盖新反馈。旧版本不继续维护新绑定；恢复新版后需再回读核对。
-
-用户新确定的“Google 日历与 Todo 各管自己的字段”方向已记录在 source-of-truth-plan.md；待发意图拆分、旧整对象迁移与冲突治理尚未完成，不能把本接口上线描述为整份信源改造已交付。
+Google 日历与 Todo 字段归属的后续改造见 [信源分工计划](source-of-truth-plan.md)；公共接口可用不代表待发意图拆分和旧迁移冲突治理已完成。

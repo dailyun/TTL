@@ -4,12 +4,10 @@ TodoTodoList is a personal execution workspace. The persistent server stores ite
 
 ## Repository and local workspace
 
-- Source repository: [dailyun/TTL](https://github.com/dailyun/TTL), SSH `git@github.com:dailyun/TTL.git`.
-- Local checkout: `/Users/dali/Documents/project/todotodolist`, with its own `.git` directory.
-- The former `findjob/projects/todotodolist` path is a compatibility symlink to this checkout. Use the new directory for development and Git operations.
-- Project-only history was extracted from the former parent repository. Existing working files and local runtime data were retained during the move.
-- `.env*` (except `.env.example`), `.tmp/`, `data/`, dependencies and build output stay outside Git. Production credentials and execution data remain on the server; cloning this repository does not restore them.
-- This repository stores application source. The optional GitHub snapshot/file source configured in settings is a separate integration.
+- Clone this repository into a directory of your choice; it is an independent application repository.
+- This repository stores application source, synthetic examples and general deployment instructions. Personal workspace paths, deployment addresses, account data and operational records belong in private configuration or a separate private runbook.
+- `.env*` (except `.env.example`), private operational files, runtime data, dependencies and build output stay outside Git. Cloning the source does not restore production credentials or user data.
+- The optional GitHub snapshot/file source configured in settings is a separate integration. Example paths such as `findwork/**/*.md` refer to the synthetic files in `examples/`, not a user's local workspace.
 
 The current app includes:
 

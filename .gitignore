@@ -11,3 +11,16 @@ data/
 __pycache__/
 *.py[cod]
 *.tsbuildinfo
+
+# Private deployment configuration, credentials and operational records
+execution.env
+*.env
+backups/
+private/
+*.bundle
+*.pem
+*.key
+google-calendar-token.json
+google-calendar-sync-state.json
+execution.json
+check-ins.json
