@@ -230,7 +230,7 @@ See [GitHub human-readable file sync](./docs/github-human-files.md) for mapping 
 
 Open `/review` to answer check-ins and manage this device's notifications. Follow [`docs/pwa-feedback.md`](docs/pwa-feedback.md) to configure VAPID keys, a persistent `TODOTODOLIST_CHECKIN_PATH`, the public HTTPS origin, and the optional reminder worker. Feedback and push state are server-side files, separate from the GitHub Item snapshot; include them in private backups. The local Goal Tree can publish reviewed check-ins, read feedback, and import a selected owner reply as a node note.
 
-Calendar end times no longer mark items done. Incoming schedule changes preserve the existing item's status; older automatically completed items are not silently reset. Actual completion remains an explicit owner decision. No real calendar-driven reminders or daily AI flow are enabled by this change.
+Calendar end times no longer mark items done. Incoming schedule changes preserve the existing item's status; older automatically completed items are not silently reset. Actual completion remains an explicit owner decision. Past imported Google events whose stored status is still active are displayed separately as “历史待确认” in the home page, status filter, and board, and no longer count as active work. This is a time-based display classification, including existing imports; it does not rewrite execution status or feedback. All-day events remain current through their inclusive final day. No real calendar-driven reminders or daily AI flow are enabled by this change.
 
 ## Goal Tree execution
 

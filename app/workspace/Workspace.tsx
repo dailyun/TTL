@@ -43,6 +43,7 @@ import {
   type SetStateAction
 } from "react";
 import type { HumanSource, Item, ItemAttachment, ItemStatus, ItemType } from "../../src/domain/types.js";
+import { itemDisplayStatus, type ItemDisplayStatus } from "../../src/domain/calendar-history.js";
 import { isSupportedCaptureImageType, SUPPORTED_CAPTURE_IMAGE_TYPES } from "../../src/domain/attachments.js";
 import { getReverseTodoPhase, isOpenReverseTodo, validateReverseTodoSchedule } from "../../src/domain/reverse-todo.js";
 import {
@@ -153,6 +154,8 @@ const TYPE_LABELS: Record<ItemType, string> = {
 };
 
 const TYPE_ORDER: ItemType[] = ["idea", "todo", "note", "avoid", "event"];
+const DISPLAY_STATUS_LABELS = { ...STATUS_LABELS, history: "历史待确认" };
+
 const STATUS_ORDER: ItemStatus[] = ["wanted", "active", "paused", "abandoned", "done"];
 const WEEKDAY_LABELS = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"];
 const SECTION_COLORS = ["#6b7280", "#276c63", "#b7532f", "#5c6f82", "#7c5c2e", "#6f4b7c", "#2f6f9f"];
@@ -161,6 +164,13 @@ export function Workspace({ initialView = "home" }: { initialView?: ViewMode }) 
   const [serverNotice, setServerNotice] = useState("正在连接服务器…");
   const [syncModeReady, setSyncModeReady] = useState(false);
   const [items, setItems] = useState<Item[]>([]);
+  const [displayNow, setDisplayNow] = useState(() => new Date());
+  useEffect(() => {
+    const refreshTime = () => setDisplayNow(new Date());
+    const timer = window.setInterval(refreshTime, 60_000);
+    window.addEventListener("focus", refreshTime);
+    return () => { window.clearInterval(timer); window.removeEventListener("focus", refreshTime); };
+  }, []);
   const [sections, setSections] = useState<Section[]>([]);
   const [allSections, setAllSections] = useState<Section[]>([]);
   const [settings, setSettings] = useState<AppSettings | null>(null);
@@ -171,7 +181,7 @@ export function Workspace({ initialView = "home" }: { initialView?: ViewMode }) 
   const [query, setQuery] = useState("");
   const [sectionFilter, setSectionFilter] = useState("all");
   const [typeFilter, setTypeFilter] = useState<ItemType | "all">("all");
-  const [statusFilter, setStatusFilter] = useState<ItemStatus | "all">("all");
+  const [statusFilter, setStatusFilter] = useState<ItemDisplayStatus | "all">("all");
   const [timeFilter, setTimeFilter] = useState<TimeFilter>("all");
   const [sourcePathFilter, setSourcePathFilter] = useState<string | null>(null);
   const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
@@ -799,7 +809,7 @@ export function Workspace({ initialView = "home" }: { initialView?: ViewMode }) 
           .includes(query.trim().toLowerCase());
       const matchesSection = sectionFilter === "all" || item.sectionId === sectionFilter;
       const matchesType = typeFilter === "all" || item.type === typeFilter;
-      const matchesStatus = statusFilter === "all" || item.status === statusFilter;
+      const matchesStatus = statusFilter === "all" || itemDisplayStatus(item, displayNow) === statusFilter;
       const matchesTime =
         timeFilter === "all" ||
         (timeFilter === "scheduled" && Boolean(item.startAt)) ||
@@ -807,11 +817,12 @@ export function Workspace({ initialView = "home" }: { initialView?: ViewMode }) 
       const matchesSourcePath = !sourcePathFilter || item.sourceLink?.sourcePath === sourcePathFilter;
       return matchesQuery && matchesSection && matchesType && matchesStatus && matchesTime && matchesSourcePath;
     });
-  }, [items, query, sectionFilter, sourcePathFilter, statusFilter, timeFilter, typeFilter]);
+  }, [items, query, sectionFilter, sourcePathFilter, statusFilter, timeFilter, typeFilter, displayNow]);
 
   const regularItems = filteredItems.filter((item) => item.type !== "avoid" && item.type !== "note");
   const inboxItems = regularItems.filter((item) => item.sectionId === "inbox");
-  const activeItems = regularItems.filter((item) => item.status === "active");
+  const activeItems = regularItems.filter((item) => itemDisplayStatus(item, displayNow) === "active");
+  const historyItems = regularItems.filter((item) => itemDisplayStatus(item, displayNow) === "history");
   const reverseTodoItems = filteredItems.filter(isOpenReverseTodo);
   const noteItems = filteredItems.filter((item) => item.type === "note");
   const todayItems = regularItems.filter(isTodayItem);
@@ -1050,9 +1061,10 @@ export function Workspace({ initialView = "home" }: { initialView?: ViewMode }) 
             <select
               aria-label="状态过滤"
               value={statusFilter}
-              onChange={(event) => setStatusFilter(event.target.value as ItemStatus | "all")}
+              onChange={(event) => setStatusFilter(event.target.value as ItemDisplayStatus | "all")}
             >
               <option value="all">全部状态</option>
+              <option value="history">历史待确认</option>
               {STATUS_ORDER.map((status) => (
                 <option key={status} value={status}>
                   {STATUS_LABELS[status]}
@@ -1109,6 +1121,7 @@ export function Workspace({ initialView = "home" }: { initialView?: ViewMode }) 
             inboxItems={inboxItems}
             todayItems={todayItems}
             activeItems={activeItems}
+            historyItems={historyItems}
             reverseTodoItems={reverseTodoItems}
             sectionMap={sectionMap}
             onOpenItem={setSelectedItemId}
@@ -2010,6 +2023,7 @@ function QuickAdd({
 }
 
 function HomeView({
+  historyItems,
   inboxItems,
   todayItems,
   activeItems,
@@ -2022,6 +2036,7 @@ function HomeView({
   inboxItems: Item[];
   todayItems: Item[];
   activeItems: Item[];
+  historyItems: Item[];
   reverseTodoItems: Item[];
   sectionMap: Map<string, Section>;
   onOpenItem: (itemId: string) => void;
@@ -2056,6 +2071,11 @@ function HomeView({
         <ItemColumn title="正在" icon={<Circle size={18} />} items={activeItems} sectionMap={sectionMap} onOpenItem={onOpenItem} onStatusChange={onStatusChange} onDelete={onDelete} />
         <ItemColumn title="收集箱" icon={<Inbox size={18} />} items={inboxItems} sectionMap={sectionMap} onOpenItem={onOpenItem} onStatusChange={onStatusChange} onDelete={onDelete} />
       </div>
+      {historyItems.length > 0 && <details className="reverse-todo-disclosure">
+        <summary>历史日程待确认 · {historyItems.length}</summary>
+        <p>这些 Google 日程的时间已过去，实际是否完成尚未确认。可在事项中确认完成或调整安排。</p>
+        <ItemColumn title="历史待确认" icon={<CalendarDays size={18} />} items={historyItems} sectionMap={sectionMap} onOpenItem={onOpenItem} onStatusChange={onStatusChange} onDelete={onDelete} />
+      </details>}
       {reverseTodoItems.length > 0 ? (
         <details className="reverse-todo-disclosure">
           <summary>
@@ -2276,14 +2296,14 @@ function BoardView({
     setDragOverStatus(null);
   }
 
-  const boardStatuses = showAbandoned
+  const boardStatuses: ItemDisplayStatus[] = [...(showAbandoned
     ? STATUS_ORDER
-    : STATUS_ORDER.filter((status) => status !== "abandoned");
+    : STATUS_ORDER.filter((status) => status !== "abandoned")), "history"];
 
   return (
     <section className="board">
       {boardStatuses.map((status) => {
-        const columnItems = items.filter((item) => item.status === status);
+        const columnItems = items.filter((item) => itemDisplayStatus(item) === status);
         return (
           <div
             className={`board-column ${dragOverStatus === status ? "drag-over" : ""}`}
@@ -2295,20 +2315,20 @@ function BoardView({
             onDragOver={(event) => {
               event.preventDefault();
               event.dataTransfer.dropEffect = "move";
-              setDragOverStatus(status);
+              if (status !== "history") setDragOverStatus(status);
             }}
             onDrop={(event) => {
               event.preventDefault();
-              void dropOnStatus(status);
+              if (status !== "history") void dropOnStatus(status);
             }}
           >
             <div className="board-title">
-              <span>{STATUS_LABELS[status]}</span>
+              <span>{DISPLAY_STATUS_LABELS[status]}</span>
               <strong>{columnItems.length}</strong>
             </div>
             <div className="board-items">
               {columnItems.length === 0 ? (
-                <div className="board-drop-empty">拖到这里</div>
+                <div className="board-drop-empty">{status === "history" ? "暂无待确认的历史日程" : "拖到这里"}</div>
               ) : null}
               {columnItems.map((item) => (
                 <article
@@ -2335,7 +2355,7 @@ function BoardView({
                   >
                     {STATUS_ORDER.map((nextStatus) => (
                       <option key={nextStatus} value={nextStatus}>
-                        {STATUS_LABELS[nextStatus]}
+                        {nextStatus === "active" && itemDisplayStatus(item) === "history" ? "历史待确认" : STATUS_LABELS[nextStatus]}
                       </option>
                     ))}
                   </select>
@@ -3470,7 +3490,7 @@ function ItemRow({
             >
               {STATUS_ORDER.map((status) => (
                 <option key={status} value={status}>
-                  {STATUS_LABELS[status]}
+                  {status === "active" && itemDisplayStatus(item) === "history" ? "历史待确认" : STATUS_LABELS[status]}
                 </option>
               ))}
             </select>
@@ -3880,7 +3900,7 @@ function ItemDetailDrawer({
           <select value={item.status} onChange={(event) => void onStatusChange(event.target.value as ItemStatus)}>
             {STATUS_ORDER.map((status) => (
               <option key={status} value={status}>
-                {STATUS_LABELS[status]}
+                {status === "active" && itemDisplayStatus(item) === "history" ? "历史待确认" : STATUS_LABELS[status]}
               </option>
             ))}
           </select>
@@ -4235,7 +4255,7 @@ function ItemMeta({ item, sectionMap }: { item: Item; sectionMap: Map<string, Se
         </span>
       ) : item.type === "note" ? (
         <span>{item.attachments?.length ? `${item.attachments.length} 张截图` : "文字记录"}</span>
-      ) : <span>{STATUS_LABELS[item.status]}</span>}
+      ) : <span>{DISPLAY_STATUS_LABELS[itemDisplayStatus(item)]}</span>}
       <span>{section?.name ?? item.sectionId}</span>
       {item.source === "github" ? <span>GitHub</span> : null}
       {item.type === "avoid" ? <span>{formatReverseTodoWindow(item)}</span> : item.startAt ? <span>{formatDateTime(item.startAt)}</span> : null}

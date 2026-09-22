@@ -17,6 +17,7 @@
 | --- | --- |
 | `GET/POST /api/v1/actions` | 读取执行工作区 / 幂等发布已选行动 |
 | `GET /api/v1/schedule` | 日程、关联、日历同步与后台状态 |
+| `GET/POST /api/v1/calendar` | 有界日期读取、有限期计划预览/提交、明确 ID 关联、单次改期/取消 |
 | `GET /api/v1/changes?after=N&limit=100` | 增量变更序列 |
 | `GET/POST /api/v1/daily` | 读取已有建议 / 保存已验证本机 Codex 摘要 |
 | `POST /api/v1/planner-status` | 本机最近连接与失败状态 |
@@ -106,3 +107,33 @@ iPhone 截图显示：本应固定在底部的导航落到了顶部，并且 8 �
 当前发布目录 `/opt/todotodolist/releases/mobile-nav-20260918`，镜像 `todotodolist:mobile-nav-20260918`；app healthy、worker running。上线后核对事项和反馈 ID 无缺失，Google 同步无错误。代码修复没有处理或覆盖用户的数据冲突。
 
 本次回退材料：`/opt/todotodolist/backups/pre-mobile-nav-20260918` 的原 Compose/环境文件，`/data/backups/pre-mobile-nav-20260918` 的一致性数据备份，以及 `todotodolist:before-mobile-nav-20260918` 旧镜像。仅回退界面时恢复原 Compose，并把 `app` 指回 `releases/execution-20260917`，执行 `docker compose up -d --no-build`；不要用备份覆盖线上新反馈和授权。手机联网完全退出 Web App 后重新打开以加载新资源，不需清除网站数据。
+
+## 历史 Google 日程分类（2026-09-18，已部署）
+
+已结束、原状态仍为 active 的 Google 导入事件，在首页和看板单列“历史待确认”，不计入“正在”；全部事项支持对应筛选与标签。旧记录同样适用，页面每分钟及恢复焦点时重新判断；改期至未来后恢复当前分类。全天事件在含结束日在内的整个日期过去后才归为历史。已完成、搁置、放弃等本人状态以及本机目标树行动不被覆盖；不回写 Google、不迁移或批量改写历史完成状态。
+
+本机验证：114 项测试、TypeScript 检查和生产构建通过。独立演示页面核对过去事件在首页“正在”为 0、历史待确认为 1，看板分类一致；手动完成演示事件后“完成”为 1、历史待确认为 0。已部署线上，未进行 iPhone 真机复核。
+
+部署入口：`ssh ubuntu@51.79.157.90`，由现有服务器账号登录并使用 sudo；凭据不保存到源码或文档。当前 `/opt/todotodolist/app` 指向 `releases/calendar-history-20260918`，app 和 worker 使用 `todotodolist:calendar-history-20260918`。镜像内 114 项测试通过，公网健康检查与含“历史待确认”的新版 JS 资源均返回 200；只读核对 48 条事项、1 条反馈无缺失，原始事项状态无改写，8 条历史事件归入历史待确认。
+
+本次配置回退材料：`/opt/todotodolist/backups/pre-calendar-history-20260918T052625Z`；一致性数据备份：`/data/backups/pre-calendar-history-20260918`。仅回退界面时恢复备份 Compose，把 app 链接改回 `releases/mobile-nav-20260918`，然后执行 `docker compose up -d --no-build`；不要覆盖现有数据。
+
+## 迁移冲突来源与回顾顺序（2026-09-23）
+
+只读核对线上 13 条 open 冲突，来自 9 月 18 日的两次 device_migration。9 条当前只存在 createdAt/updatedAt 差异；其余涉及两个预置示例事项的删除/时间差异，以及两份 default 设置的自动 GitHub 快照开关差异。前五项 ID 是预置示例事项；inbox/life/work 是默认版块，default 是设置对象。客户端首次同步提交本地缓存，服务端按完整对象比较；不同 operationId 分别保存冲突，所以初始化时间差也会触发冲突，同名实体可出现多条。不是 13 个真实行动都需要重新决定。
+
+按本人要求，把今日页“回顾实际发生的事”移到“迁移 / 同步冲突”前面。本次不自动选择版本、不清除冲突、不改同步算法。
+
+已发布 `todotodolist:review-order-20260923`，当前 app 链接为 `releases/review-order-20260923`。以线上 calendar-history-20260918 为基础仅交换两个区域，未包含本机其他在途修改。独立生产构建通过；公网健康和新版 JS 返回 200，新资源中回顾区域先于冲突区域。部署后 73 条事项无缺失，13 条冲突及本人反馈原样保留。配置回退目录 `/opt/todotodolist/backups/pre-review-order-20260922T183005Z`，数据备份 `/data/backups/pre-review-order-20260923`；回退使用 calendar-history-20260918 镜像，不覆盖最新数据。本机全项目类型检查被其他在途的 app/api/v1/openapi/route.ts 语法错误阻塞，未把此结果视为本次独立版本失败或改动相关 API。
+
+## 公共日历接口（2026-09-23）
+
+目标树各本机会话经同一私密 API 凭据使用 `/api/v1/calendar`，不依赖会话 Google 连接器。GET 必须提供 from/until（含截止日），可按 treeId/nodeId 筛选；Google 不可用时返回 503，不拿旧缓存当新空档。POST 的 kind 为 plan/link/move/cancel，精确参数见 OpenAPI 1.2.0 和 `src/execution/calendar-api.ts`。
+
+- 默认 preview=true；提交带同一请求的 previewToken 和 operationId。版本/预览变化返回 412，操作号用于不同内容返回 409；相同操作重试返回已有结果。任何日期无法安排时整批不创建。
+- 有限期计划在 calendarPlans 中聚合，每次执行有独立 Google 事件（非原生 RRULE），保留10分钟提醒默认值；截止后不会继续生成。单次执行反馈不完成整个计划。
+- 明确 eventId/seriesId 的 link 只保存关联，不重建或改期 Google 事件。calendarBindings 让未来同系列实例继承节点，既有本人反馈原文不改，接口可补充明确关联来源。没有结构化绑定的描述文字不是关联证据。
+- move/cancel 需要当前 occurrence 版本和节点关联；Google 写入使用 etag，避免覆盖本人改期。Google 接受写入但回应丢失时，通过稳定事件 ID / 写入标识核对后重试；不把其他手动改动当自己的成功。
+- applied 只表示持久化成功，calendarConfirmed 与 jobs 表示 Google 结果；失败不能当成功。本机队列由既有登录服务重试，版本冲突保留待处理。新有限期计划不自动随节点暂停而批量撤销，暂停整组需明确选择执行范围并逐项取消。
+
+服务器仅接收选定标题、稳定 ID 和安排参数，本机档案与完整材料不外发。仅限同一已配置账号的主日历。命令、Skill 入口与授权边界见目标树 `docs/calendar-operations.md`。
