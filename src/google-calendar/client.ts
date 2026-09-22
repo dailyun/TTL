@@ -35,6 +35,7 @@ export interface GoogleCalendarEventDate {
 }
 
 export interface GoogleCalendarEvent {
+  reminders?: { useDefault: boolean; overrides?: Array<{ method: string; minutes: number }> };
   recurringEventId?: string;
   originalStartTime?: GoogleCalendarEventDate;
   transparency?: "opaque" | "transparent";
@@ -53,6 +54,7 @@ export interface GoogleCalendarEvent {
 }
 
 export interface GoogleCalendarEventPatch {
+  reminders?: { useDefault: boolean; overrides: Array<{ method: "popup"; minutes: number }> };
   id?: string;
   extendedProperties?: { private?: Record<string, string> };
   description?: string;

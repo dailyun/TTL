@@ -8,6 +8,7 @@ export interface Occurrence {
   calendarId: string; managed: boolean; locked: boolean;
   reviewEnabled?: boolean; calendarStatus?: "confirmed" | "cancelled";
   feedbackId?: string; reason?: string; updatedAt: string;
+  reminderMinutes?: number;
 }
 export interface CalendarJob {
   id: string; occurrenceId: string; occurrenceVersion: number;
@@ -31,6 +32,9 @@ export interface ExecutionState {
   preferences: Preferences;
   changes: Array<{ sequence: number; kind: string; id?: string; at: string }>;
   receipts: Record<string, string>;
+  calendarPlans?: Array<{ id: string; itemId: string; goalTreeLink: { treeId: string; nodeId: string }; request: unknown; occurrenceIds: string[]; createdAt: string }>;
+  calendarBindings?: Array<{ id: string; calendarId: string; eventId?: string; seriesId?: string; goalTreeLink: { treeId: string; nodeId: string }; createdAt: string }>;
+  calendarOperations?: Record<string, { hash: string; occurrenceIds: string[] }>;
   conflicts: Conflict[];
   calendar: { events: GoogleCalendarEvent[]; lastSyncAt?: string; lastError?: string; watchError?: string; retryAt?: string };
   worker: { lastStartedAt?: string; lastSuccessAt?: string; lastError?: string; leaseUntil?: string; leaseId?: string; lastBackupAt?: string; backupError?: string };

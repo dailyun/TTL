@@ -13,6 +13,9 @@ export function GET(request: Request) {
       sections: "/api/v1/sections",
       checkIns: "/api/v1/check-ins",
       feedback: "/api/v1/feedback",
+      calendar: "/api/v1/calendar",
+      actions: "/api/v1/actions",
+      schedule: "/api/v1/schedule",
       reminderDispatch: "/api/v1/notifications/dispatch"
     }
   });

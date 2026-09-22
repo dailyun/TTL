@@ -43,6 +43,7 @@ export interface Item {
   durationMinutes?: number;
   autoSchedule?: boolean;
   recurrence?: "daily" | "weekdays";
+  calendarPlanId?: string;
   createdAt: string;
   updatedAt: string;
   deletedAt?: string;

@@ -30,6 +30,8 @@ export async function publishAction(value: unknown) {
     const w = execution(state);
     if (!receipt(state, input.operationId, input)) {
       const existing = w.snapshot.items.find(i => i.id === input.id);
+      if (!existing && w.snapshot.items.some(i => !i.deletedAt && i.goalTreeLink?.treeId === input.goalTreeLink.treeId && i.goalTreeLink.nodeId === input.goalTreeLink.nodeId
+        && (i.calendarPlanId || i.source === "google_calendar"))) throw new ExternalApiError(409, "calendar_already_linked", "该节点已有日历安排，请使用公共日历入口读取或改期，避免重复发布。");
       if (existing && existing.updatedAt !== input.expectedUpdatedAt) throw new ExternalApiError(412, "item_changed", "事项已变化，先读取当前版本。");
       if (existing && JSON.stringify(existing.goalTreeLink) !== JSON.stringify(input.goalTreeLink)) throw new ExternalApiError(409, "link_conflict", "不能把事项关联到另一个节点。");
       const now = new Date().toISOString();

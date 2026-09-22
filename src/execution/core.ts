@@ -48,7 +48,7 @@ export function reconcileOwnerEdits(state: CheckInState, before: Item[]) {
     const moved = item.startAt !== previous.startAt || item.endAt !== previous.endAt;
     const edited = item.title !== previous.title || item.description !== previous.description || item.allDay !== previous.allDay;
     if (!moved && !edited) continue;
-    if (item.recurrence && Date.parse(occurrence.startAt ?? "") < Date.now()) continue;
+    if ((item.recurrence || item.calendarPlanId) && Date.parse(occurrence.startAt ?? "") < Date.now()) continue;
     if (moved && item.startAt && item.endAt) {
       occurrence.startAt = item.startAt; occurrence.endAt = item.endAt;
       occurrence.date = localDate(new Date(item.startAt)); occurrence.locked = true;
@@ -59,9 +59,14 @@ export function reconcileOwnerEdits(state: CheckInState, before: Item[]) {
 }
 export function ensureReview(state: CheckInState, occurrence: Occurrence, item: Item, now = new Date()) {
   if (!occurrence.endAt || occurrence.reviewEnabled === false) return;
+  if (execution(state).jobs.some(j => j.occurrenceId === occurrence.id && j.occurrenceVersion === occurrence.version && j.state !== "done")) return;
   const id = `review:${occurrence.id}`;
   const existing = state.checkIns.find(c => c.id === id);
   if (existing) {
+    // Association is metadata, not a rewrite of the owner's original answer.
+    if (!existing.goalTreeLink && item.goalTreeLink) {
+      existing.goalTreeLink = { ...item.goalTreeLink }; existing.version++; existing.updatedAt = now.toISOString();
+    }
     if (existing.status === "answered") return;
     const status = occurrence.state === "cancelled" || !eligible(item) ? "cancelled" : "pending";
     if (existing.dueAt !== occurrence.endAt || existing.status !== status || existing.title !== item.title) {
@@ -83,7 +88,7 @@ export function applyFeedback(state: CheckInState, feedback: Feedback) {
     occurrence.updatedAt = feedback.submittedAt;
     occurrence.version++;
     const item = w.snapshot.items.find(i => i.id === occurrence.itemId);
-    if (item && !item.recurrence && !item.deletedAt && !["paused", "abandoned"].includes(item.status)) {
+    if (item && !item.recurrence && !item.calendarPlanId && !item.deletedAt && !["paused", "abandoned"].includes(item.status)) {
       item.status = feedback.outcome === "completed" ? "done" : "active";
       item.updatedAt = feedback.submittedAt;
     }
@@ -108,7 +113,7 @@ export function reconcileItems(state: CheckInState, now = new Date()) {
       if (review?.status === "pending") { review.status = "cancelled"; review.version++; }
     } else {
       // Explicit owner edits of an existing one-off schedule are queued, never written in the browser.
-      if (!item.recurrence && occurrence.managed && item.startAt && item.endAt
+      if (!item.recurrence && !item.calendarPlanId && occurrence.managed && item.startAt && item.endAt
         && (item.startAt !== occurrence.startAt || item.endAt !== occurrence.endAt)
         && !occurrence.feedbackId && occurrence.state !== "cancelled") {
         occurrence.startAt = item.startAt; occurrence.endAt = item.endAt; occurrence.locked = true;
@@ -131,7 +136,7 @@ export function scheduleToday(state: CheckInState, now = new Date()) {
     const end = e.end?.dateTime ?? (e.end?.date ? `${e.end.date}T00:00:00+08:00` : undefined);
     return start && end ? [{ start: Date.parse(start), end: Date.parse(end), eventId: e.id }] : [];
   });
-  for (const o of w.occurrences) if (o.startAt && o.endAt && o.state !== "cancelled") busy.push({ start: Date.parse(o.startAt), end: Date.parse(o.endAt), eventId: o.eventId, occurrenceId: o.id });
+  for (const o of w.occurrences) if (o.startAt && o.endAt && o.state !== "cancelled" && o.calendarStatus !== "cancelled") busy.push({ start: Date.parse(o.startAt), end: Date.parse(o.endAt), eventId: o.eventId, occurrenceId: o.id });
   const availableStart = (duration: number, occupied: Busy[]) => {
     let start = Math.ceil(Math.max(now.getTime() + 60_000, windowStart) / 60_000) * 60_000;
     for (const slot of [...occupied].sort((a, b) => a.start - b.start)) {
@@ -161,7 +166,7 @@ export function scheduleToday(state: CheckInState, now = new Date()) {
   }
   const created: Occurrence[] = [];
   for (const item of w.snapshot.items) {
-    if (!eligible(item) || !item.autoSchedule || !item.durationMinutes || !["todo", "event"].includes(item.type)) continue;
+    if (!eligible(item) || !item.autoSchedule || item.calendarPlanId || !item.durationMinutes || !["todo", "event"].includes(item.type)) continue;
     if (item.recurrence === "weekdays" && [0, 6].includes(new Date(`${date}T12:00:00+08:00`).getUTCDay())) continue;
     const occurrenceDate = item.recurrence ? date : "once";
     const id = `occ:${digest([item.id, occurrenceDate]).slice(0, 32)}`;

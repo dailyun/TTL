@@ -482,6 +482,7 @@ function validateSnapshotItem(value: unknown, index: number): Item {
   if (value.durationMinutes !== undefined && (!Number.isInteger(value.durationMinutes) || Number(value.durationMinutes) < 5 || Number(value.durationMinutes) > 600)) throw new Error(`items[${index}].durationMinutes 无效`);
   if (value.autoSchedule !== undefined && typeof value.autoSchedule !== "boolean") throw new Error(`items[${index}].autoSchedule 无效`);
   if (value.recurrence !== undefined && !["daily", "weekdays"].includes(String(value.recurrence))) throw new Error(`items[${index}].recurrence 无效`);
+  if (value.calendarPlanId !== undefined) assertString(value.calendarPlanId, `items[${index}].calendarPlanId`);
   if (value.goalTreeLink !== undefined && (!isRecord(value.goalTreeLink) || typeof value.goalTreeLink.treeId !== "string" || typeof value.goalTreeLink.nodeId !== "string")) throw new Error(`items[${index}].goalTreeLink 无效`);
   return value as unknown as Item;
 }

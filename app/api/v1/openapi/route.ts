@@ -16,12 +16,29 @@ function openApiDocument(origin: string) {
     openapi: "3.1.0",
     info: {
       title: "TodoTodoList External API",
-      version: "1.1.0",
+      version: "1.2.0",
       description: "Canonical server file stores items, occurrences, calendar jobs and owner feedback. GitHub snapshots remain optional imports/exports. See docs/execution-operations.md."
     },
     servers: [{ url: `${origin}/api/v1` }],
     security: [{ bearerAuth: [] }],
     paths: {
+      "/calendar": {
+        get: { operationId: "readSharedCalendar", summary: "Read a fresh bounded Google range, explicit node bindings, occurrences, busy times and write status",
+          parameters: [{ ...queryParameter("from", { type: "string", format: "date" }), required: true }, { ...queryParameter("until", { type: "string", format: "date" }), required: true }, queryParameter("treeId", { type: "string" }), queryParameter("nodeId", { type: "string" })],
+          responses: { "200": jsonResponse({ type: "object" }), "400": errorResponse(), "401": errorResponse(), "503": errorResponse() } },
+        post: { operationId: "operateSharedCalendar", summary: "Preview/commit bounded schedules, bind explicit Google IDs, move or cancel a single occurrence. Saved is distinct from Google-confirmed.",
+          requestBody: jsonRequest(calendarCommandDocumentation()),
+          responses: {
+            "200": jsonResponse({ type: "object", properties: {
+              applied: { type: "boolean" }, calendarConfirmed: { type: "boolean" },
+              previewToken: { type: "string" }, preview: { type: "object" },
+              occurrences: { type: "array", items: { type: "object" } },
+              jobs: { type: "array", items: { type: "object" } }
+            } }),
+            "400": errorResponse(), "401": errorResponse(), "409": errorResponse(),
+            "412": errorResponse(), "503": errorResponse()
+          } }
+      },
       "/actions": {
         get: { operationId: "readExecutionWorkspace", summary: "Read canonical snapshot, occurrences, reviews, jobs and connection status", responses: { "200": jsonResponse({ type: "object" }), "401": errorResponse(), "503": errorResponse() } },
         post: { operationId: "publishSelectedAction", summary: "Publish an already selected action; durable steps reported separately", requestBody: jsonRequest({ $ref: "#/components/schemas/PublishAction" }), responses: { "200": jsonResponse({ type: "object" }), "400": errorResponse(), "409": errorResponse(), "412": errorResponse() } }
@@ -248,6 +265,23 @@ function openApiDocument(origin: string) {
 
 function queryParameter(name: string, schema: object) {
   return { name, in: "query", required: false, schema };
+}
+
+function calendarCommandDocumentation() {
+  const common = { operationId: { type: "string", minLength: 1, maxLength: 128 },
+    goalTreeLink: { type: "object", additionalProperties: false, required: ["treeId", "nodeId"], properties: { treeId: { type: "string" }, nodeId: { type: "string" } } },
+    preview: { type: "boolean", default: true }, previewToken: { type: "string", description: "Required on commit; use the digest returned by preview." } };
+  const date = { type: "string", format: "date" }, time = { type: "string", pattern: "^([01]\\d|2[0-3]):[0-5]\\d$" };
+  const command = (kind: string, required: string[], properties: object) => ({ type: "object", additionalProperties: false,
+    required: ["kind", "operationId", "goalTreeLink", ...required], properties: { ...common, kind: { const: kind }, ...properties } });
+  const occurrence = { occurrenceId: { type: "string" }, expectedVersion: { type: "integer", minimum: 1 } };
+  return { oneOf: [
+    command("plan", ["title", "durationMinutes", "from"], { title: { type: "string", maxLength: 200 }, durationMinutes: { type: "integer", minimum: 5, maximum: 600 }, from: date, until: date,
+      count: { type: "integer", minimum: 1, maximum: 120 }, everyDays: { type: "integer", minimum: 1, maximum: 365, default: 1 }, weekdays: { type: "boolean", default: false }, times: { type: "array", maxItems: 10, items: time }, windowStart: time, windowEnd: time, reminderMinutes: { type: "integer", minimum: 0, maximum: 40320, default: 10 } }),
+    { ...command("link", ["from", "until"], { from: date, until: date, eventId: { type: "string" }, seriesId: { type: "string" } }), oneOf: [{ required: ["eventId"] }, { required: ["seriesId"] }] },
+    command("move", ["occurrenceId", "expectedVersion", "startAt", "endAt"], { ...occurrence, startAt: { type: "string", format: "date-time" }, endAt: { type: "string", format: "date-time" } }),
+    command("cancel", ["occurrenceId", "expectedVersion"], occurrence)
+  ] };
 }
 
 function ifMatchParameter() {

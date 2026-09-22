@@ -7,6 +7,7 @@ import { createGoogleCalendarEvent, patchGoogleCalendarEvent, deleteGoogleCalend
   googleCalendarConfigFromEnv, refreshGoogleCalendarAccessToken, googleCalendarEventToItem, GoogleCalendarApiError,
   type GoogleCalendarEvent } from "../google-calendar/client.js";
 import { changed, dailyNotifications, digest, eligible, ensureReview, execution, localDate, reconcileItems, scheduleToday } from "./core.js";
+import { bindCalendarItem } from "./calendar-binding.js";
 
 function eventTimes(event: GoogleCalendarEvent) {
   const startAt = event.start?.dateTime ?? (event.start?.date ? `${event.start.date}T00:00:00+08:00` : undefined);
@@ -35,12 +36,13 @@ export function reconcileCalendar(state: CheckInState, events: GoogleCalendarEve
       // Google's instance ID survives a recurring occurrence's move; originalStartTime also survives it.
       const id = `occ:${digest([calendarId, event.recurringEventId || event.id, event.originalStartTime ?? event.id]).slice(0, 32)}`;
       occurrence = { id, itemId: item.id, date: localDate(new Date(times.startAt)), version: 1, state: "scheduled",
-        ...times, eventId: event.id, etag: event.etag, calendarId, managed: false, locked: true, reviewEnabled: localDate(new Date(times.endAt)) >= localDate(now), updatedAt: now.toISOString() };
+        ...times, eventId: event.id, etag: event.etag, calendarId, calendarStatus: "confirmed", managed: false, locked: true, reviewEnabled: localDate(new Date(times.endAt)) >= localDate(now), updatedAt: now.toISOString() };
       w.occurrences.push(occurrence); changed(state, "calendar_imported", id, now);
     }
     if (!occurrence || !item) continue;
+    bindCalendarItem(state, item, event, calendarId);
     const activeJob = w.jobs.find(j => j.occurrenceId === occurrence!.id && j.occurrenceVersion === occurrence!.version && ["pending", "sending", "failed"].includes(j.state));
-    if (event.etag === occurrence.etag && (event.status === "cancelled") === (occurrence.calendarStatus === "cancelled")) { ensureReview(state, occurrence, item, now); continue; }
+    if (event.etag === occurrence.etag && occurrence.calendarStatus === (event.status === "cancelled" ? "cancelled" : "confirmed")) { ensureReview(state, occurrence, item, now); continue; }
     // Do not reinterpret an old mirror as an owner edit while our own write is pending.
     if (activeJob) continue;
     const moved = !sameTime(times.startAt, occurrence.startAt) || !sameTime(times.endAt, occurrence.endAt);
@@ -59,7 +61,7 @@ export function reconcileCalendar(state: CheckInState, events: GoogleCalendarEve
       if (times.startAt) occurrence.date = localDate(new Date(times.startAt));
       if (!occurrence.feedbackId) occurrence.state = "scheduled";
       if (event.summary) item.title = event.summary;
-      if (!item.recurrence) { item.startAt = times.startAt; item.endAt = times.endAt; }
+      if (!item.recurrence && !item.calendarPlanId) { item.startAt = times.startAt; item.endAt = times.endAt; }
       if (!occurrence.managed) { item.description = event.description ?? ""; delete item.deletedAt; }
       ensureReview(state, occurrence, item, now);
     }
@@ -99,7 +101,13 @@ export async function processCalendarJobs(now = new Date()) {
       let remote: GoogleCalendarEvent | undefined;
       try { remote = await getGoogleCalendarEvent(params); }
       catch (error) { if (!(error instanceof GoogleCalendarApiError && [404, 410].includes(error.status))) throw error; }
-      if (remote && occurrence.etag && remote.etag !== occurrence.etag) throw new GoogleCalendarApiError("Event changed", 412, "Precondition Failed");
+      const matchesTarget = remote && remote.summary === item.title && (remote.description ?? "") === item.description
+        && (item.allDay ? remote.start?.date === localDate(new Date(occurrence.startAt!)) && remote.end?.date === localDate(new Date(occurrence.endAt!))
+          : sameTime(remote.start?.dateTime, occurrence.startAt) && sameTime(remote.end?.dateTime, occurrence.endAt))
+        && (occurrence.reminderMinutes === undefined || (remote.reminders?.useDefault === false && remote.reminders.overrides?.length === 1
+          && remote.reminders.overrides[0].method === "popup" && remote.reminders.overrides[0].minutes === occurrence.reminderMinutes));
+      const recoveredWrite = matchesTarget && remote?.extendedProperties?.private?.todotodolistWrite === job.id;
+      if (remote && occurrence.etag && remote.etag !== occurrence.etag && !recoveredWrite && !(job.kind === "delete" && remote.status === "cancelled")) throw new GoogleCalendarApiError("Event changed", 412, "Precondition Failed");
       if (remote && !occurrence.etag && remote.extendedProperties?.private?.todotodolistOccurrence !== occurrence.id) throw new GoogleCalendarApiError("ID collision", 412, "Precondition Failed");
       let saved: GoogleCalendarEvent | undefined;
       if (job.kind === "delete") {
@@ -109,9 +117,10 @@ export async function processCalendarJobs(now = new Date()) {
         const patch = { summary: item.title, description: item.description,
           start: item.allDay ? { date: localDate(new Date(occurrence.startAt!)) } : { dateTime: occurrence.startAt, timeZone: "Asia/Shanghai" },
           end: item.allDay ? { date: localDate(new Date(occurrence.endAt!)) } : { dateTime: occurrence.endAt, timeZone: "Asia/Shanghai" },
-          extendedProperties: { private: { todotodolistOccurrence: occurrence.id, todotodolistItem: item.id } } };
+          ...(occurrence.reminderMinutes !== undefined ? { reminders: { useDefault: false, overrides: [{ method: "popup" as const, minutes: occurrence.reminderMinutes }] } } : {}),
+          extendedProperties: { private: { ...remote?.extendedProperties?.private, todotodolistOccurrence: occurrence.id, todotodolistItem: item.id, todotodolistWrite: job.id } } };
         // An accepted create whose response was lost is recovered using the stable ID.
-        if (remote && !occurrence.etag && sameTime(remote.start?.dateTime, occurrence.startAt) && sameTime(remote.end?.dateTime, occurrence.endAt) && remote.summary === item.title) saved = remote;
+        if (recoveredWrite || (remote && !occurrence.etag && matchesTarget)) saved = remote;
         else saved = remote ? await patchGoogleCalendarEvent({ ...params, etag: remote.etag, patch })
           : await createGoogleCalendarEvent({ accessToken, calendarId: occurrence.calendarId, event: { ...patch, id: occurrence.eventId } });
       }
@@ -124,7 +133,11 @@ export async function processCalendarJobs(now = new Date()) {
         current.calendarStatus = job.kind === "delete" ? "cancelled" : "confirmed";
         if (current.version === occurrence.version) {
           if (job.kind === "put") { if (current.reason === "避开新增日程，正在等待日历确认") current.reason = "已避开新增日程"; if (!current.feedbackId) current.state = "scheduled"; ensureReview(state, current, w.snapshot.items.find(i => i.id === item.id)!); }
-          else if (!current.feedbackId) current.state = "cancelled";
+          else {
+            if (!current.feedbackId) current.state = "cancelled";
+            const review = state.checkIns.find(c => c.occurrenceId === current.id);
+            if (review?.status === "pending") { review.status = "cancelled"; review.version++; }
+          }
           current.updatedAt = new Date().toISOString();
         }
         if (saved) { w.calendar.events = w.calendar.events.filter(e => e.id !== saved.id); w.calendar.events.push(saved); }

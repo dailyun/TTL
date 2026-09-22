@@ -43,7 +43,7 @@
 - 浏览器日历写回入口、外部 Item API、日历专用 API、GitHub/JSON 导入均通过相同归属层，不能只修 worker 而留下绕行接口。
 - `app/today/TodayWorkspace.tsx`：冲突展示标题、对象类型、字段差异、来源与时间；回顾区域继续优先展示。
 
-仓库已有未提交的 calendar-api/calendar-binding 等工作。实施前逐项审阅、检查接口重叠、修复其独立检查问题，再决定复用或单独提交；不得把在途实现当成已验收能力。
+公共 calendar-api/calendar-binding 本轮已独立实现：有界读取、有限期排期、明确 ID 关联、单次改期/取消、幂等重试与反馈关联。OpenAPI 语法问题已修复。这属于可复用的操作入口，不代表本文的信源拆分已经完成：当前 occurrence 仍兼有待发时间意图，整对象迁移/冲突解决及旧调度器也尚未统一改造。阶段 1–3 继续审阅和迁移这些入口；上线与验证证据见 execution-operations.md。
 
 ## 4. 冲突规则
 

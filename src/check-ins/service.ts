@@ -104,7 +104,11 @@ export async function answerCheckIn(id: string, value: unknown) {
 export async function feedbackFeed(after: number, limit: number, id?: string) {
   return withCheckInState((state) => {
     const eligible = state.feedback.filter((f) => f.sequence > after && (!id || f.id === id));
-    const data = eligible.slice(0, limit);
+    const data = eligible.slice(0, limit).map(feedback => {
+      if (feedback.goalTreeLink) return feedback;
+      const link = state.checkIns.find(c => c.id === feedback.checkInId)?.goalTreeLink;
+      return link ? { ...feedback, goalTreeLink: link, associationSource: "explicit_calendar_binding" } : feedback;
+    });
     return { data, nextCursor: data.at(-1)?.sequence ?? after, hasMore: eligible.length > data.length };
   }, false);
 }

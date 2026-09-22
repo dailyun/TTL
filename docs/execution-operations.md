@@ -137,3 +137,15 @@ iPhone 截图显示：本应固定在底部的导航落到了顶部，并且 8 �
 - applied 只表示持久化成功，calendarConfirmed 与 jobs 表示 Google 结果；失败不能当成功。本机队列由既有登录服务重试，版本冲突保留待处理。新有限期计划不自动随节点暂停而批量撤销，暂停整组需明确选择执行范围并逐项取消。
 
 服务器仅接收选定标题、稳定 ID 和安排参数，本机档案与完整材料不外发。仅限同一已配置账号的主日历。命令、Skill 入口与授权边界见目标树 `docs/calendar-operations.md`。
+
+### 公共日历上线与回退记录
+
+2026-09-23 已发布 `/opt/todotodolist/releases/calendar-api-20260923`，app 链接及 app/worker 镜像均切至 `todotodolist:calendar-api-20260923`，镜像 `sha256:b16f995e94dd448403d8e7408c3ea048fadd7ad086ecec0b2fb54bdb0dfefac9`。保留同日 review-order 版本的回顾区排序，没有用旧基线覆盖它。同步错误为空，app healthy、worker running。
+
+验证：125 项 Todo 测试、161 项本机目标树测试、TypeScript 与生产构建通过；镜像内公共日历 11 项测试通过。隔离 HTTP 校验未鉴权 401、非法日期 400、缺 Google 配置 503。跨目录本机 CLI 成功读取真实 Google 范围，并关联既有 20 次执行与 20 份回顾；重复相同绑定未创建新事件。补齐旧导入记录缺失的 Google 确认标记，保留时间和反馈。核对线上 73 条事项、9 条原始反馈的 ID、状态、附件与内容无损；13 条既有迁移冲突仍保留。本轮不制造真实完成反馈、不改变实际安排，不以这些检查代替 iPhone 收到通知或真实早晚周期。
+
+最新回退基线为 `review-order-20260923`，不是更早的 calendar-history。配置与私密环境备份：`/opt/todotodolist/backups/pre-calendar-api-20260923-final`；旧镜像别名 `todotodolist:before-calendar-api-20260923-final`。锁内数据备份：`/data/backups/pre-calendar-api-20260923-final/execution-2026-09-22T18-33-43.262Z.json`，SHA-256 `a539cba186e5bc42cb72e324ca56dcde60b61d6f6c88e4084487517ab963fab8`。更早的 pre-calendar-api-20260923 保留完整私密数据归档。
+
+本轮只关联已有系列，没有新建 calendarPlans。如后续已使用新有限期计划，不应直接启动不理解新计划的旧 worker；先停写，核对并迁移新状态。仅对本轮绑定版本回退时，停止 app/worker，私密备份当前 data 与配置；恢复上述 final 目录的 Compose，把 app 符号链接改为 releases/review-order-20260923，再 `sudo docker compose -f /opt/todotodolist/docker-compose.yml up -d --no-build`。保留当前 execution.env、data 与最新授权，不拿旧 JSON 覆盖新反馈。旧版本不继续维护新绑定；恢复新版后需再回读核对。
+
+用户新确定的“Google 日历与 Todo 各管自己的字段”方向已记录在 source-of-truth-plan.md；待发意图拆分、旧整对象迁移与冲突治理尚未完成，不能把本接口上线描述为整份信源改造已交付。
