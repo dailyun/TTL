@@ -1,0 +1,23 @@
+name: Feature request
+description: Describe a real workflow TodoTodoList could improve.
+title: "feat: "
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do?
+      description: Describe the workflow and where the current app gets in your way. Use synthetic examples.
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Desired outcome
+      description: Explain what success would look like for the user.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives or workarounds
+      description: Include any existing workflow you have tried.
