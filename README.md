@@ -1,5 +1,7 @@
 # TodoTodoList
 
+![TodoTodoList workflow overview: capture, organize, schedule, reflect](docs/assets/header.svg)
+
 **A personal workspace for ideas, tasks, calendars, and the decisions to leave things undone.**
 
 [简体中文](README.zh-CN.md) · [Setup and integrations](docs/setup-and-integrations.md) · [Contributing](CONTRIBUTING.md) · [Report a bug](https://github.com/dailyun/TTL/issues/new?template=bug_report.yml)
