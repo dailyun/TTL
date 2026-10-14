@@ -1,5 +1,7 @@
 # TodoTodoList
 
+![TodoTodoList 工作流：收集、整理、安排、回顾](docs/assets/header.svg)
+
 **把想法、任务、日历，以及决定不做的事，放进一个个人工作台。**
 
 [English](README.md) · [部署与集成](docs/setup-and-integrations.md) · [参与贡献](CONTRIBUTING.md) · [报告问题](https://github.com/dailyun/TTL/issues/new?template=bug_report.yml)
